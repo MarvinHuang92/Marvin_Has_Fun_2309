@@ -5,7 +5,7 @@
 
 import os
 import sys
-import win32com.client as win32
+import win32com.client as win32  # pip install pywin32
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -154,14 +154,15 @@ def send_mail_via_SMTP(mail_info, attachment_dir='.'):
 if __name__ == '__main__':
     
     # Get inputs from command line arguments
-    if len(sys.argv) != 6:
-        print('Usage: python send_email_with_auto_packed_attachments.py <recipient_email> <attachment_directory> <attachment_size_limit_MB> <interval_seconds> <test_mode_Y/N>')
+    if len(sys.argv) != 7:
+        print('Usage: python send_email_with_auto_packed_attachments.py <recipient_email> <attachment_directory> <attachment_size_limit_MB> <interval_seconds> <sending_app> <test_mode_Y/N>')
         sys.exit(1)
     recipient = str(sys.argv[1]).strip()
     attachment_dir = str(sys.argv[2]).strip()
     attachment_size_limit = int(sys.argv[3])
     interval = int(sys.argv[4])
-    test_mode = str(sys.argv[5]).strip()  # Y = generate message only, N = send email
+    sending_app = str(sys.argv[5])
+    test_mode = str(sys.argv[6]).strip()  # Y = generate message only, N = send email
 
     # Generate Message or Send Email?
     send_mail_switch = test_mode == "N" or test_mode == "n"
@@ -258,8 +259,10 @@ if __name__ == '__main__':
             print('TO: ' + str(recipients))
             print('CC: ' + str(cc))
             mail_info = MailInfo(mail_title, recipients, cc, html_msg, attachments)
-            # send_mail_via_Outlook(mail_info, attachment_dir)
-            send_mail_via_SMTP(mail_info, attachment_dir)
+            if sending_app == "outlook":
+                send_mail_via_Outlook(mail_info, attachment_dir)
+            else:  # sending_app == "smtp"
+                send_mail_via_SMTP(mail_info, attachment_dir)
         else:
             print('Generating Email Message... [%d/%d]' % (i + 1, packages_valid_count))
             print("") # blank line

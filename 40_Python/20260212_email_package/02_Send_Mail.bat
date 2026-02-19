@@ -13,6 +13,7 @@ set DEF_RECEIVER=marvinhuang@qq.com
 set DEF_ATTCH_DIR=./attachments/package
 set DEF_SIZE_LIMIT=20
 set DEF_INTERVAL=10
+set DEF_SENDING_APP=1
 set DEF_TEST_MODE=Y
 
 REM Load history if present (skip first two header lines)
@@ -34,16 +35,19 @@ if exist "%HISTORY_FILE%" (
             set "LINE5=%%A"
         ) else if not defined LINE6 (
             set "LINE6=%%A"
+        ) else if not defined LINE7 (
+            set "LINE7=%%A"
         )
 	)
-	rem Expect 6 values in history: PY_PATH, RECEIVER, ATTCH_DIR, SIZE_LIMIT, INTERVAL, TEST_MODE
-	if defined LINE6 (
+	rem Expect 7 values in history: PY_PATH, RECEIVER, ATTCH_DIR, SIZE_LIMIT, INTERVAL, SENDING_APP, TEST_MODE
+	if defined LINE7 (
 		set "DEF_PY=!LINE1!"
 		set "DEF_RECEIVER=!LINE2!"
 		set "DEF_ATTCH_DIR=!LINE3!"
         set "DEF_SIZE_LIMIT=!LINE4!"
 		set "DEF_INTERVAL=!LINE5!"
-		set "DEF_TEST_MODE=!LINE6!"
+		set "DEF_SENDING_APP=!LINE6!"
+		set "DEF_TEST_MODE=!LINE7!"
 	)
 )
 
@@ -73,6 +77,11 @@ goto AFTER_SAN_DEF_INTERVAL
 :SAN_DEF_INTERVAL
 if "%DEF_INTERVAL:~-1%"==")" set "DEF_INTERVAL=%DEF_INTERVAL:~0,-1%"
 :AFTER_SAN_DEF_INTERVAL
+if not "%DEF_SENDING_APP%"=="" goto SAN_DEF_SENDING_APP
+goto AFTER_SAN_DEF_SENDING_APP
+:SAN_DEF_SENDING_APP
+if "%DEF_SENDING_APP:~-1%"==")" set "DEF_SENDING_APP=%DEF_SENDING_APP:~0,-1%"
+:AFTER_SAN_DEF_SENDING_APP
 if not "%DEF_TEST_MODE%"=="" goto SAN_DEF_TEST_MODE
 goto AFTER_SAN_DEF_TEST_MODE
 :SAN_DEF_TEST_MODE
@@ -107,13 +116,18 @@ set /p interval="!PROMPT_INTERVAL!"
 if not defined interval set "interval=%DEF_INTERVAL%"
 if "%interval:~-1%"==")" set "interval=%interval:~0,-1%"
 
+set "PROMPT_SENDING_APP=Sending App (1.Outlook, 2.SMTP) [%DEF_SENDING_APP%]: "
+set /p sending_app="!PROMPT_SENDING_APP!"
+if not defined sending_app set "sending_app=%DEF_SENDING_APP%"
+if "%sending_app:~-1%"==")" set "sending_app=%sending_app:~0,-1%"
+
 set "PROMPT_TEST=Test mode (Y/N) [%DEF_TEST_MODE%]: "
 set /p test_mode="!PROMPT_TEST!"
 if not defined test_mode set "test_mode=%DEF_TEST_MODE%"
 if "%test_mode:~-1%"==")" set "test_mode=%test_mode:~0,-1%"
 
 REM =====================
-REM Save inputs to history file for next run (2 header lines + 6 values)
+REM Save inputs to history file for next run (2 header lines + 7 values)
 REM =====================
 REM Clear previous history
 >"%HISTORY_FILE%" echo NOTE: Values recorded below; trailing ')' is not part of the value.
@@ -123,6 +137,7 @@ REM Clear previous history
 >>"%HISTORY_FILE%" echo(!attch_dir!)
 >>"%HISTORY_FILE%" echo(!size_limit!)
 >>"%HISTORY_FILE%" echo(!interval!)
+>>"%HISTORY_FILE%" echo(!sending_app!)
 >>"%HISTORY_FILE%" echo(!test_mode!)
 
 REM =====================
@@ -150,6 +165,15 @@ REM Validate interval (integer > 0)
 echo %interval%| findstr /R "^[0-9][0-9]*$" >nul || (set "VALID=0" & echo [Error] Interval must be an integer: %interval%)
 if "%interval%"=="0" set "VALID=0" & echo [Error] Interval must be greater than 0
 
+REM Validate sending_app (must be 1 or 2)
+if "%sending_app%"=="1" (
+	set sending_app=outlook
+) else if "%sending_app%"=="2" (
+	set sending_app=smtp
+) else (
+	set "VALID=0" & echo [Error] Sending App must be 1 or 2
+)
+
 REM Validate attachments directory exists, if not, create it
 if not exist "%attch_dir%" mkdir "%attch_dir%" & echo [Info] Attachments directory created: %attch_dir%
 
@@ -167,10 +191,11 @@ echo Email receiver             : %receiver%
 echo Attachments directory      : %attch_dir%
 echo Attachment size limit (MB) : %size_limit%
 echo Interval (seconds)         : %interval%
+echo Sending App                : %sending_app%
 echo Test mode (Y/N)            : %test_mode%
 echo -----------------------------------------
 
-set command=%PY_PATH% scripts\send_email_with_auto_packed_attachments.py %receiver% %attch_dir% %size_limit% %interval% %test_mode%
+set command=%PY_PATH% scripts\send_email_with_auto_packed_attachments.py %receiver% %attch_dir% %size_limit% %interval% %sending_app% %test_mode%
 echo.
 echo Running command: %command%
 call %command%
