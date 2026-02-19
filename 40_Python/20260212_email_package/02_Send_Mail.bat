@@ -10,7 +10,7 @@ set HISTORY_FILE=%CFG_DIR%\history_input_02.txt
 REM Defaults
 set DEF_PY=C:/TCC/Tools/python3/3.7.4-29_WIN64_2/python.exe
 set DEF_RECEIVER=marvinhuang@qq.com
-set DEF_ATTCH_DIR=./attachments/package
+set DEF_ATTCH_DIR=./attachments
 set DEF_SIZE_LIMIT=20
 set DEF_INTERVAL=10
 set DEF_SENDING_APP=1
