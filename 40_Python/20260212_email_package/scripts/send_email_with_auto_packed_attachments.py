@@ -42,20 +42,6 @@ def pack_attachments(attachment_dir, size_limit_mb):
     current_package_size = 0.0
     safe_margin = 0.98
 
-    # check if package folder exists
-    package_dir_exist = os.path.isdir(os.path.join(attachment_dir, "package"))
-    dir_structure_file_exist = os.path.isfile(os.path.join(attachment_dir, "dir_structure.txt"))
-    print("") # blank line
-    print('Scanning attachments: package folder existance: %s' % str(package_dir_exist))
-    print('Scanning attachments: dir_structure.txt existance: %s' % str(dir_structure_file_exist))
-    
-    if package_dir_exist:
-        # set package folder as attachment_dir
-        attachment_dir = os.path.join(attachment_dir, "package")
-        # copy dir_structure.txt into package folder
-        if dir_structure_file_exist:
-            shutil.copy(os.path.join(attachment_dir, "../dir_structure.txt"), attachment_dir)
-
     # get all attachment files with their sizes in MB
     all_attachment_files = os.listdir(attachment_dir)
     all_attachment_sizes = [os.path.getsize(os.path.join(attachment_dir, f)) / (1024 * 1024) for f in all_attachment_files]
@@ -82,10 +68,6 @@ def pack_attachments(attachment_dir, size_limit_mb):
     # Append the last package if it has any files
     if current_package.attachment_files:
         packages_valid.append(current_package)
-
-    if package_dir_exist and dir_structure_file_exist:
-        # remove dir_structure.txt in package folder
-        os.remove(os.path.join(attachment_dir, "dir_structure.txt"))
 
     return packages_valid, packages_invalid
 
@@ -185,6 +167,20 @@ if __name__ == '__main__':
 
     # Generate Message or Send Email?
     send_mail_switch = test_mode == "N" or test_mode == "n"
+
+    # check if package folder exists
+    package_dir_exist = os.path.isdir(os.path.join(attachment_dir, "package"))
+    dir_structure_file_exist = os.path.isfile(os.path.join(attachment_dir, "dir_structure.txt"))
+    print("") # blank line
+    print('Scanning attachments: package folder existance: %s' % str(package_dir_exist))
+    print('Scanning attachments: dir_structure.txt existance: %s' % str(dir_structure_file_exist))
+    
+    if package_dir_exist:
+        # set package folder as attachment_dir
+        attachment_dir = os.path.join(attachment_dir, "package")
+        # copy dir_structure.txt into package folder
+        if dir_structure_file_exist:
+            shutil.copy(os.path.join(attachment_dir, "../dir_structure.txt"), attachment_dir)
 
     # Get all attachment files with their sizes in MB
     packages_valid, packages_invalid = pack_attachments(attachment_dir, attachment_size_limit)
@@ -299,5 +295,9 @@ if __name__ == '__main__':
 
     for i in range(len(packages_invalid)):
         print('[Warning] Attachment too large to be packed: %s (%.2f MB)' % (packages_invalid[i].attachment_files[0], packages_invalid[i].attachment_sizes[0]))
+
+    if package_dir_exist and dir_structure_file_exist:
+        # remove dir_structure.txt in package folder
+        os.remove(os.path.join(attachment_dir, "dir_structure.txt"))
 
     # End of script
