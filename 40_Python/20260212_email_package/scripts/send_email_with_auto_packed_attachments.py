@@ -72,6 +72,24 @@ def pack_attachments(attachment_dir, size_limit_mb):
     return packages_valid, packages_invalid
 
 
+def read_first_attachment_from_structure(structure_path):
+    if not os.path.isfile(structure_path):
+        return ""
+    try:
+        with open(structure_path, "r", encoding="utf-8") as handle:
+            lines = [line.rstrip("\n") for line in handle]
+    except OSError:
+        return ""
+
+    for idx, line in enumerate(lines):
+        if line.strip() == "first attachment:":
+            for next_line in lines[idx + 1:]:
+                if next_line.strip():
+                    return next_line.strip()
+            return ""
+    return ""
+
+
 def send_mail_via_Outlook(mail_info, attachment_dir='.'):
     outlook = win32.Dispatch('Outlook.Application')
 
@@ -220,7 +238,14 @@ if __name__ == '__main__':
     # Email Content Parameters
     recipients = [recipient,]  # Add more recipients if needed
     cc = []  # Add CC recipients if needed
-    first_attachment = packages_valid[0].attachment_files[0] if packages_valid else "No Attachments"
+    first_attachment_from_doc = ""
+    if dir_structure_file_exist:
+        structure_path = os.path.join(attachment_dir, "dir_structure.txt")
+        first_attachment_from_doc = read_first_attachment_from_structure(structure_path)
+    if first_attachment_from_doc and first_attachment_from_doc != "N/A":
+        first_attachment = first_attachment_from_doc
+    else:
+        first_attachment = packages_valid[0].attachment_files[0] if packages_valid else "No Attachments"
 
     print("") # blank line
     for i in range(packages_valid_count):
@@ -281,7 +306,7 @@ if __name__ == '__main__':
         else:
             print('Generating Email Message... [%d/%d]' % (i + 1, packages_valid_count))
             print("") # blank line
-            with open('message_%d_of_%d.html' % (i + 1, packages_valid_count), 'w') as f:
+            with open('message_%d_of_%d.html' % (i + 1, packages_valid_count), 'w', encoding='utf-8') as f:
                 f.write('<h2>\nTitle: ' + mail_title + '\n</h2>')
                 f.write('<br>TO: ' + str(recipients))
                 f.write('<br>CC: ' + str(cc))

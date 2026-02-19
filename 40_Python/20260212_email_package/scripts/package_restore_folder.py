@@ -70,14 +70,21 @@ def _prepare_package_dir(attachment_dir):
 def generate_dir_structure_doc(input_dir, attachment_dir):
     root_path = os.path.abspath(input_dir)
     counter = {"value": 1}
+    structure_lines, file_entries = _build_structure_lines(root_path, counter)
+    if file_entries:
+        first_attachment = os.path.basename(file_entries[0][1])
+    else:
+        first_attachment = "N/A"
     lines = []
     lines.append("root path:")
     lines.append(root_path)
     lines.append("")
+    lines.append("first attachment:")
+    lines.append(first_attachment)
+    lines.append("")
     lines.append("==================================")
     lines.append("")
     lines.append("dir structure:")
-    structure_lines, file_entries = _build_structure_lines(root_path, counter)
     lines.extend(structure_lines)
     lines.append("")
     lines.append("==================================")
