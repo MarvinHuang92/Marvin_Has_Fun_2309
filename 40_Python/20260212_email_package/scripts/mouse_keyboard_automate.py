@@ -13,13 +13,14 @@ from common_config import (
 
 # 窗口按钮坐标（需要根据实际情况调整）
 mouse_locations = [
-{"usage":"New Email", "coords": (595, 570)},  # 新建邮件按钮
-{"usage":"Recipient", "coords": (685, 308)},  # 收件人输入框
-{"usage":"Mail Subject", "coords": (685, 338)},  # 邮件主题输入框
-{"usage":"Add Attachment", "coords": (980, 563)},  # 添加附件按钮
-{"usage":"Attachment Folder", "coords": (-1743, 301)},  # 附件文件夹输入框
-{"usage":"Attachment Confirm", "coords": (980, 563)},  # 确认添加附件按钮
-{"usage":"Confirm Send", "coords": (685, 308)},  # 确认发送按钮
+{"usage":"New Email", "coords": (188, 52)},  # 新建邮件按钮
+{"usage":"Recipient", "coords": (590, 404)},  # 收件人输入框
+{"usage":"Mail Subject", "coords": (590, 522)},  # 邮件主题输入框
+{"usage":"Add Attachment", "coords": (740, 350)},  # 添加附件按钮
+{"usage":"Attachment Folder", "coords": (871, 640)},  # 附件文件夹输入框
+{"usage":"Attachment Folder Inside", "coords": (871, 585)},  # 附件文件夹输入框内部坐标（用于点击以获得焦点）
+{"usage":"Attachment Confirm", "coords": (1270, 640)},  # 确认添加附件按钮
+{"usage":"Confirm Send", "coords": (527, 348)},  # 确认发送按钮
 ]
 
 keyboard_inputs = [
@@ -115,6 +116,7 @@ if __name__ == '__main__':
 
             # Mouse and keyboard operations
             pag.click(get_mouse_coords("New Email"))  # Click "New Email" button
+            time.sleep(2)  # Wait for the new email dialog to open
 
             # recipient
             pag.click(get_mouse_coords("Recipient"))  # Click recipient input box
@@ -132,8 +134,12 @@ if __name__ == '__main__':
                 pag.hotkey("ctrl", "a")  # Ctrl + A to select all existing text
                 pag.hotkey("del")  # Delete existing text
             pag.typewrite(get_keyboard_input("Attachment Folder"))  # Type attachment folder path
+            pag.hotkey("enter")  # Press Enter to confirm the folder path
+            pag.click(get_mouse_coords("Attachment Folder Inside"))  # Click "Attachment Folder" input box inside the file dialog to ensure it has focus
+            if send_mail_switch:  # to avoid delete files in demo mode
+                pag.hotkey("ctrl", "a")  # Ctrl + A to select all existing text
             pag.click(get_mouse_coords("Attachment Confirm"))  # Click "Confirm" button to add attachment
-            time.sleep(8)  # Wait for the attachment to be added
+            time.sleep(6)  # Wait for the attachment to be added
             
             # Send email or demo only?
             if send_mail_switch:
