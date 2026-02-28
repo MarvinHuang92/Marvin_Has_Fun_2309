@@ -7,7 +7,7 @@ from datetime import datetime
 keep_extension = True
 
 # Ignore these extensions when packaging files
-ignore_extension_list = [".rar", ".zip"]
+ignore_extension_list = [".rar", ".zip", ".mprx"]
 
 delimiter_for_display = "-" * 41
 delimiter_for_html = "=" * 44
