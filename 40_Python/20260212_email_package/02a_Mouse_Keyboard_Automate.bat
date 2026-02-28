@@ -18,7 +18,7 @@ if exist "%HISTORY_FILE%" (
 	set "COUNT=0"
 	for /f "usebackq tokens=* delims=" %%A in ("%HISTORY_FILE%") do (
 		set /a COUNT+=1
-		if !COUNT! LEQ 4 (
+		if !COUNT! LEQ 2 (
 			rem skip header lines
 		) else if not defined LINE1 (
 			set "LINE1=%%A"
