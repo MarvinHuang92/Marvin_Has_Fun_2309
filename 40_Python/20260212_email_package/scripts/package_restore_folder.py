@@ -5,6 +5,7 @@ import sys
 import shutil
 from datetime import datetime
 
+keep_extension = True  # Set to False to ignore file extensions when packaging/restoring
 
 def _list_dir_entries(current_dir):
     entries = []
@@ -67,6 +68,39 @@ def _prepare_package_dir(attachment_dir):
     return package_dir
 
 
+def _build_packaged_filename(file_id, src_path):
+    if not keep_extension:
+        return file_id
+    _, extension = os.path.splitext(src_path)
+    if not extension:
+        return file_id
+    return "{0}{1}".format(file_id, extension)
+
+
+def _find_packaged_file_path(package_dir, entry_id, original_name):
+    exact_path = os.path.join(package_dir, entry_id)
+    if os.path.isfile(exact_path):
+        return exact_path
+
+    _, original_extension = os.path.splitext(original_name)
+    if original_extension:
+        candidate_with_ext = os.path.join(package_dir, "{0}{1}".format(entry_id, original_extension))
+        if os.path.isfile(candidate_with_ext):
+            return candidate_with_ext
+
+    prefix = "{0}.".format(entry_id)
+    try:
+        for package_name in os.listdir(package_dir):
+            if package_name.startswith(prefix):
+                matched_path = os.path.join(package_dir, package_name)
+                if os.path.isfile(matched_path):
+                    return matched_path
+    except OSError:
+        return None
+
+    return None
+
+
 def generate_dir_structure_doc(input_dir, attachment_dir):
     root_path = os.path.abspath(input_dir)
     counter = {"value": 1}
@@ -101,7 +135,8 @@ def generate_dir_structure_doc(input_dir, attachment_dir):
 
     package_dir = _prepare_package_dir(attachment_dir)
     for file_id, src_path in file_entries:
-        dest_path = os.path.join(package_dir, file_id)
+        packaged_name = _build_packaged_filename(file_id, src_path)
+        dest_path = os.path.join(package_dir, packaged_name)
         shutil.copyfile(src_path, dest_path)
     return output_path
 
@@ -218,8 +253,8 @@ def restore_from_package(attachment_dir, output_dir):
         else:
             file_path = os.path.join(output_root, *stack, name)
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            src_path = os.path.join(package_dir, entry_id)
-            if not os.path.isfile(src_path):
+            src_path = _find_packaged_file_path(package_dir, entry_id, name)
+            if (not src_path) or (not os.path.isfile(src_path)):
                 print('Warning: id {0} file "{1}" missing'.format(entry_id, name))
                 missing_count += 1
                 continue
