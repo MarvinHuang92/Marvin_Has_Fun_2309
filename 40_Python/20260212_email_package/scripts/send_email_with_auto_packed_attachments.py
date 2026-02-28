@@ -13,6 +13,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 
+from common_config import delimiter_for_display, delimiter_for_html
+
 class MailInfo:
     def __init__(self, title, recipients, cc, html_msg, attachments=None):
         self.title = title
@@ -72,12 +74,49 @@ def pack_attachments(attachment_dir, size_limit_mb):
 
     return packages_valid, packages_invalid
 
+def get_ignored_files(dir_structure_file_path):
+    ignored_files = []
+    if not os.path.isfile(dir_structure_file_path):
+        return ignored_files
 
-def read_first_attachment_from_structure(structure_path):
-    if not os.path.isfile(structure_path):
+    try:
+        with open(dir_structure_file_path, "r", encoding="utf-8") as handle:
+            lines = [line.rstrip("\n") for line in handle]
+    except OSError:
+        return ignored_files
+
+    start_index = None
+    for idx, line in enumerate(lines):
+        if line.strip() == "ignored_files:":
+            start_index = idx + 1
+            break
+    if start_index is None:
+        return ignored_files
+
+    for line in lines[start_index:]:
+        content = line.strip()
+        if not content:
+            continue
+        if content in [delimiter_for_display, delimiter_for_html, "date & time:"]:
+            break
+        if content == "N/A":
+            return []
+
+        if ". " in content:
+            prefix, value = content.split(". ", 1)
+            if prefix.isdigit():
+                content = value.strip()
+
+        if content:
+            ignored_files.append(content)
+
+    return ignored_files
+
+def read_first_attachment_from_structure(dir_structure_file_path):
+    if not os.path.isfile(dir_structure_file_path):
         return ""
     try:
-        with open(structure_path, "r", encoding="utf-8") as handle:
+        with open(dir_structure_file_path, "r", encoding="utf-8") as handle:
             lines = [line.rstrip("\n") for line in handle]
     except OSError:
         return ""
@@ -91,11 +130,11 @@ def read_first_attachment_from_structure(structure_path):
     return ""
 
 
-def read_timestamp_from_structure(structure_path):
-    if not structure_path or not os.path.isfile(structure_path):
+def read_timestamp_from_structure(dir_structure_file_path):
+    if not dir_structure_file_path or not os.path.isfile(dir_structure_file_path):
         return ""
     try:
-        with open(structure_path, "r", encoding="utf-8") as handle:
+        with open(dir_structure_file_path, "r", encoding="utf-8") as handle:
             lines = [line.rstrip("\n") for line in handle]
     except OSError:
         return ""
@@ -109,8 +148,8 @@ def read_timestamp_from_structure(structure_path):
     return ""
 
 
-def build_mail_folder_name(structure_path):
-    raw_timestamp = read_timestamp_from_structure(structure_path)
+def build_mail_folder_name(dir_structure_file_path):
+    raw_timestamp = read_timestamp_from_structure(dir_structure_file_path)
     if raw_timestamp:
         try:
             parsed = datetime.strptime(raw_timestamp, "%Y-%m-%d %H:%M:%S")
@@ -176,7 +215,7 @@ def send_mail_via_SMTP(mail_info, attachment_dir='.'):
 
     # 添加邮件正文
     # message.attach(MIMEText("邮件正文", "plain"))  # 普通文字格式
-    message.attach(MIMEText(html_msg, 'html', 'utf-8'))  # HTML格式
+    message.attach(MIMEText(mail_info.html_msg, 'html', 'utf-8'))  # HTML格式
 
     # 添加附件
     if mail_info.attachments:
@@ -201,7 +240,7 @@ def send_mail_via_SMTP(mail_info, attachment_dir='.'):
 
 
 if __name__ == '__main__':
-    
+
     # Get inputs from command line arguments
     if len(sys.argv) != 7:
         print('Usage: python send_email_with_auto_packed_attachments.py <recipient_email> <attachment_directory> <attachment_size_limit_MB> <interval_seconds> <sending_app> <test_mode_Y/N>')
@@ -213,12 +252,15 @@ if __name__ == '__main__':
     sending_app = str(sys.argv[5])
     test_mode = str(sys.argv[6]).strip()  # Y = generate message only, N = send email
 
+    print(delimiter_for_display)
+
     # Generate Message or Send Email?
     send_mail_switch = test_mode == "N" or test_mode == "n"
 
     # check if package folder exists
     package_dir_exist = os.path.isdir(os.path.join(attachment_dir, "package"))
-    dir_structure_file_exist = os.path.isfile(os.path.join(attachment_dir, "dir_structure.txt"))
+    dir_structure_file_path = os.path.join(attachment_dir, "dir_structure.txt")
+    dir_structure_file_exist = os.path.isfile(dir_structure_file_path)
     print("") # blank line
     print('Scanning attachments: package folder existance: %s' % str(package_dir_exist))
     print('Scanning attachments: dir_structure.txt existance: %s' % str(dir_structure_file_exist))
@@ -231,8 +273,11 @@ if __name__ == '__main__':
             shutil.copy(os.path.join(attachment_dir, "../dir_structure.txt"), attachment_dir)
 
     # Get all attachment files with their sizes in MB
-    packages_valid, packages_invalid = pack_attachments(attachment_dir, attachment_size_limit)
+    packages_valid, packages_invalid= pack_attachments(attachment_dir, attachment_size_limit)
     packages_valid_count = len(packages_valid)
+
+    # Get ignored files due to invalid extension
+    ignored_files = get_ignored_files(dir_structure_file_path)
     
     # Prepare valid package info for HTML message
     html_package_summary_list = []
@@ -263,15 +308,25 @@ if __name__ == '__main__':
         html_invalid_package_summary = '<br><b style="color: red;">Warning: Some Attachments are too large to be packed</b><br>'
         html_invalid_package_summary += html_invalid_package_info + '<br><br>'
         html_invalid_package_summary += '<b>Summary: %d attachments unavailable, %.2f MB in total</b><br><br>' % (len(packages_invalid), total_size_invalid)
-        html_invalid_package_summary += "<b>============================================</b><br>"
+        html_invalid_package_summary += "<b>%s</b><br>" % delimiter_for_html
+
+    # Prepare ignored file info for HTML message
+    html_ignored_file_summary = ""
+    html_ignored_file_info = ""
+    for file in ignored_files:
+        html_ignored_file_info += '<br>- %s' % (file)
+    if len(ignored_files) > 0:
+        html_ignored_file_summary = '<br><b style="color: red;">Warning: Some Attachments are ignored due to invalid extension</b><br>'
+        html_ignored_file_summary += html_ignored_file_info + '<br><br>'
+        html_ignored_file_summary += '<b>Summary: %d attachments ignored, will not be sent</b><br><br>' % (len(ignored_files))
+        html_ignored_file_summary += "<b>%s</b><br>" % delimiter_for_html
 
     # Email Content Parameters
     recipients = [recipient,]  # Add more recipients if needed
     cc = []  # Add CC recipients if needed
     first_attachment_from_doc = ""
-    structure_path = os.path.join(attachment_dir, "dir_structure.txt")
     if dir_structure_file_exist:
-        first_attachment_from_doc = read_first_attachment_from_structure(structure_path)
+        first_attachment_from_doc = read_first_attachment_from_structure(dir_structure_file_path)
     if first_attachment_from_doc and first_attachment_from_doc != "N/A":
         first_attachment = first_attachment_from_doc
     else:
@@ -285,7 +340,7 @@ if __name__ == '__main__':
         if not os.path.isdir(mails_output_dir):
             os.makedirs(mails_output_dir)
 
-        mail_folder_name = build_mail_folder_name(structure_path if dir_structure_file_exist else "")
+        mail_folder_name = build_mail_folder_name(dir_structure_file_path if dir_structure_file_exist else "")
         mail_output_dir = os.path.join(mails_output_dir, mail_folder_name)
         if os.path.isdir(mail_output_dir):
             shutil.rmtree(mail_output_dir)
@@ -316,7 +371,7 @@ if __name__ == '__main__':
             html_attachments_info += html_package_summary_list[j] + '<br>' + html_package_info_list[j] + '<br>'
 
         html_attachments_info += "<b>Summary: %d attachments available, %.2f MB in total</b><br><br>" % (attachment_count_valid, total_size_valid)
-        html_attachments_info += "<b>============================================</b><br>"
+        html_attachments_info += "<b>%s</b><br>" % delimiter_for_html
     
         # Get current date and time
         datetime_str = __import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -335,6 +390,7 @@ if __name__ == '__main__':
         <p style="font-family:Courier New;font-size:12px;">
         <br>%s
         <br>%s
+        <br>%s
         <br>
         </p>
 
@@ -343,7 +399,7 @@ if __name__ == '__main__':
         </p>
 
         </html>
-        """ % (i + 1, packages_valid_count, attachment_size_limit, html_attachments_info, html_invalid_package_summary, datetime_str)
+        """ % (i + 1, packages_valid_count, attachment_size_limit, html_attachments_info, html_invalid_package_summary, html_ignored_file_summary, datetime_str)
 
 
         # Send Email or Generate Message
@@ -386,9 +442,16 @@ if __name__ == '__main__':
 
     for i in range(len(packages_invalid)):
         print('[Warning] Attachment too large to be packed: %s (%.2f MB)' % (packages_invalid[i].attachment_files[0], packages_invalid[i].attachment_sizes[0]))
+    
+    print("") # blank line
+    for i in range(len(ignored_files)):
+        print('[Warning] File ignored due to invalid extension: %s' % ignored_files[i])
 
     if package_dir_exist and dir_structure_file_exist:
         # remove dir_structure.txt in package folder
+        # Note: this path cannot be replaces by dir_structure_file_path,
+        # because the attachment_dir defined above may already be changed to the package folder
         os.remove(os.path.join(attachment_dir, "dir_structure.txt"))
 
+    print(delimiter_for_display)
     # End of script

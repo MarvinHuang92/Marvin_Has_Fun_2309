@@ -5,7 +5,11 @@ import sys
 import shutil
 from datetime import datetime
 
-keep_extension = True  # Set to False to ignore file extensions when packaging/restoring
+from common_config import *
+
+def _should_ignore_file(file_name):
+    _, extension = os.path.splitext(file_name)
+    return extension.lower() in [item.lower() for item in ignore_extension_list]
 
 def _list_dir_entries(current_dir):
     entries = []
@@ -33,30 +37,45 @@ def _format_id_line(counter, line_text):
     return "{0}  {1}".format(id_text, line_text)
 
 
-def _build_structure_lines(root_dir, counter, level=0):
+def _build_structure_lines(root_dir, counter, level=0, base_root=None, ignored_counter=None):
+    if base_root is None:
+        base_root = root_dir
+    if ignored_counter is None:
+        ignored_counter = {"value": 1}
     lines = []
     file_entries = []
+    ignored_files = []
     dirs, files = _list_dir_entries(root_dir)
     for name in dirs:
         prefix = "" if level == 0 else "| " * (level - 1) + "|-"
         line_text = _format_id_line(counter, "[D] " + prefix + name)
         lines.append(line_text)
         child_dir = os.path.join(root_dir, name)
-        child_lines, child_files = _build_structure_lines(child_dir, counter, level + 1)
+        child_lines, child_files, child_ignored_files = _build_structure_lines(child_dir, counter, level + 1, base_root, ignored_counter)
         lines.extend(child_lines)
         file_entries.extend(child_files)
+        ignored_files.extend(child_ignored_files)
     for name in files:
+        src_path = os.path.join(root_dir, name)
+        if _should_ignore_file(name):
+            relative_path = os.path.relpath(src_path, base_root).replace("\\", "/")
+            ignored_index_text = str(ignored_counter["value"]).zfill(2)
+            ignored_counter["value"] += 1
+            print("[Ignored] [{0}] Skip file: {1}".format(ignored_index_text, relative_path))
+            ignored_files.append(relative_path)
+            continue
         prefix = "" if level == 0 else "| " * (level - 1) + "|-"
         line_text = _format_id_line(counter, "[F] " + prefix + name)
         lines.append(line_text)
-        file_entries.append((line_text.split("  ", 1)[0], os.path.join(root_dir, name)))
-    return lines, file_entries
+        file_entries.append((line_text.split("  ", 1)[0], src_path))
+    return lines, file_entries, ignored_files
 
 
 def _prepare_package_dir(attachment_dir):
     package_dir = os.path.join(attachment_dir, "package")
     if os.path.isdir(package_dir):
-        print("Warning: package directory exists, clearing: {0}".format(package_dir))
+        print("") # blank line
+        print("[Warning] package directory exists, clearing: {0}".format(package_dir))
         for entry in os.listdir(package_dir):
             entry_path = os.path.join(package_dir, entry)
             if os.path.isdir(entry_path):
@@ -104,7 +123,7 @@ def _find_packaged_file_path(package_dir, entry_id, original_name):
 def generate_dir_structure_doc(input_dir, attachment_dir):
     root_path = os.path.abspath(input_dir)
     counter = {"value": 1}
-    structure_lines, file_entries = _build_structure_lines(root_path, counter)
+    structure_lines, file_entries, ignored_files = _build_structure_lines(root_path, counter)
     if file_entries:
         first_attachment = os.path.basename(file_entries[0][1])
     else:
@@ -116,12 +135,20 @@ def generate_dir_structure_doc(input_dir, attachment_dir):
     lines.append("first attachment:")
     lines.append(first_attachment)
     lines.append("")
-    lines.append("==================================")
+    lines.append(delimiter_for_display)
     lines.append("")
     lines.append("dir structure:")
     lines.extend(structure_lines)
     lines.append("")
-    lines.append("==================================")
+    lines.append("ignored_files:")
+    if ignored_files:
+        number_width = max(2, len(str(len(ignored_files))))
+        for index, ignored_path in enumerate(ignored_files, start=1):
+            lines.append("{0}. {1}".format(str(index).zfill(number_width), ignored_path))
+    else:
+        lines.append("N/A")
+    lines.append("")
+    lines.append(delimiter_for_display)
     lines.append("")
     lines.append("date & time:")
     lines.append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -150,11 +177,11 @@ def _read_structure_entries(structure_path):
     for idx, line in enumerate(raw_lines):
         if line.strip() == "dir structure:":
             start_index = idx + 1
-        elif start_index is not None and line.strip() == "==================================":
+        elif start_index is not None and line.strip() in ["ignored_files:", delimiter_for_display]:
             end_index = idx
             break
     if start_index is None:
-        return []
+        return [], ""
     if end_index is None:
         end_index = len(raw_lines)
 
@@ -289,9 +316,11 @@ if __name__ == '__main__':
         attachment_dir = str(sys.argv[2]).strip()
         output_dir = str(sys.argv[3]).strip()
 
+    print(delimiter_for_display)
     if command_type == "package":
         generate_dir_structure_doc(input_dir, attachment_dir)
     elif command_type == "restore":
         restore_from_package(attachment_dir, output_dir)
 
+    print(delimiter_for_display)
     # End of script
