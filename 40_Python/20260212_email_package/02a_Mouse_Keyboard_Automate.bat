@@ -138,7 +138,7 @@ echo Test mode (Y/N)            : %test_mode%
 echo Start attachment ID        : %start_attch_id%
 echo -----------------------------------------
 
-set command=%PY_PATH% scripts\mouse_keyboard_automate.py %test_mode% %receiver% %start_attch_id%
+set command=%PY_PATH% scripts\mouse_keyboard_automate.py %receiver% %test_mode% %start_attch_id%
 echo.
 echo Running command: %command%
 call %command%

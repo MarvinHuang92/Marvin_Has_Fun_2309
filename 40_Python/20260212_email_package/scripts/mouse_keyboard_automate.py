@@ -30,7 +30,7 @@ keyboard_inputs = [
 ]
 
 # 发送邮件等待时间(s)
-send_mail_interval = 25
+send_mail_interval = 40
 
 def get_mouse_coords(usage):
     for item in mouse_locations:
