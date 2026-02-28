@@ -8,6 +8,7 @@ import sys
 import shutil
 import win32com.client as win32  # pip install pywin32
 import smtplib
+from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
@@ -88,6 +89,35 @@ def read_first_attachment_from_structure(structure_path):
                     return next_line.strip()
             return ""
     return ""
+
+
+def read_timestamp_from_structure(structure_path):
+    if not structure_path or not os.path.isfile(structure_path):
+        return ""
+    try:
+        with open(structure_path, "r", encoding="utf-8") as handle:
+            lines = [line.rstrip("\n") for line in handle]
+    except OSError:
+        return ""
+
+    for idx, line in enumerate(lines):
+        if line.strip() == "date & time:":
+            for next_line in lines[idx + 1:]:
+                if next_line.strip():
+                    return next_line.strip()
+            return ""
+    return ""
+
+
+def build_mail_folder_name(structure_path):
+    raw_timestamp = read_timestamp_from_structure(structure_path)
+    if raw_timestamp:
+        try:
+            parsed = datetime.strptime(raw_timestamp, "%Y-%m-%d %H:%M:%S")
+            return "mail_{0}".format(parsed.strftime("%Y%m%d_%H%M%S"))
+        except ValueError:
+            pass
+    return "mail_{0}".format(datetime.now().strftime("%Y%m%d_%H%M%S"))
 
 
 def send_mail_via_Outlook(mail_info, attachment_dir='.'):
@@ -239,13 +269,38 @@ if __name__ == '__main__':
     recipients = [recipient,]  # Add more recipients if needed
     cc = []  # Add CC recipients if needed
     first_attachment_from_doc = ""
+    structure_path = os.path.join(attachment_dir, "dir_structure.txt")
     if dir_structure_file_exist:
-        structure_path = os.path.join(attachment_dir, "dir_structure.txt")
         first_attachment_from_doc = read_first_attachment_from_structure(structure_path)
     if first_attachment_from_doc and first_attachment_from_doc != "N/A":
         first_attachment = first_attachment_from_doc
     else:
         first_attachment = packages_valid[0].attachment_files[0] if packages_valid else "No Attachments"
+
+    mails_output_dir = ""
+    mail_output_dir = ""
+    mails_package_root_dir = ""
+    if not send_mail_switch:
+        mails_output_dir = os.path.abspath("mails")
+        if not os.path.isdir(mails_output_dir):
+            os.makedirs(mails_output_dir)
+
+        mail_folder_name = build_mail_folder_name(structure_path if dir_structure_file_exist else "")
+        mail_output_dir = os.path.join(mails_output_dir, mail_folder_name)
+        if os.path.isdir(mail_output_dir):
+            shutil.rmtree(mail_output_dir)
+            print("") # blank line
+            print('[Info] Directory cleared: %s' % mail_output_dir)
+        os.makedirs(mail_output_dir)
+        print("") # blank line
+        print('[Info] Mail output directory: %s' % mail_output_dir)
+
+        mails_package_root_dir = os.path.join(mail_output_dir, "package")
+        if os.path.isdir(mails_package_root_dir):
+            shutil.rmtree(mails_package_root_dir)
+            print("") # blank line
+            print('[Info] Directory cleared: %s' % mails_package_root_dir)
+        os.makedirs(mails_package_root_dir)
 
     print("") # blank line
     for i in range(packages_valid_count):
@@ -306,12 +361,23 @@ if __name__ == '__main__':
         else:
             print('Generating Email Message... [%d/%d]' % (i + 1, packages_valid_count))
             print("") # blank line
-            with open('message_%d_of_%d.html' % (i + 1, packages_valid_count), 'w', encoding='utf-8') as f:
+            output_html_path = os.path.join(mail_output_dir, 'message_%d_of_%d.html' % (i + 1, packages_valid_count))
+            with open(output_html_path, 'w', encoding='utf-8') as f:
                 f.write('<h2>\nTitle: ' + mail_title + '\n</h2>')
                 f.write('<br>TO: ' + str(recipients))
                 f.write('<br>CC: ' + str(cc))
                 f.write(html_msg)
                 f.close()
+
+            current_mail_package_dir = os.path.join(mails_package_root_dir, str(i + 1))
+            if os.path.isdir(current_mail_package_dir):
+                shutil.rmtree(current_mail_package_dir)
+            os.makedirs(current_mail_package_dir)
+            for attachment_name in attachments:
+                src_attachment_path = os.path.join(attachment_dir, attachment_name)
+                dst_attachment_path = os.path.join(current_mail_package_dir, attachment_name)
+                if os.path.isfile(src_attachment_path):
+                    shutil.copy2(src_attachment_path, dst_attachment_path)
         # Wait for the specified interval before sending the next email
         if i < packages_valid_count - 1:
             print('Waiting for %d seconds before sending the next email...' % interval)

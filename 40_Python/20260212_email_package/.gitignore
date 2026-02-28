@@ -1,5 +1,4 @@
 cfg/history_input_*.txt
 attachments/
 output/
-message.html
-message_*.html
+mails/
