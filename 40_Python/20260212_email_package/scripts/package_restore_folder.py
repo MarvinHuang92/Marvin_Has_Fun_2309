@@ -3,9 +3,14 @@
 import os
 import sys
 import shutil
-from datetime import datetime
 
-from common_config import *
+from common_config import (
+    delimiter_for_display,
+    format_timestamp_value,
+    ignore_extension_list,
+    keep_extension,
+    read_timestamp_from_structure,
+)
 
 def _should_ignore_file(file_name):
     _, extension = os.path.splitext(file_name)
@@ -151,7 +156,7 @@ def generate_dir_structure_doc(input_dir, attachment_dir):
     lines.append(delimiter_for_display)
     lines.append("")
     lines.append("date & time:")
-    lines.append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    lines.append(__import__('datetime').datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     if not os.path.isdir(attachment_dir):
         os.makedirs(attachment_dir)
@@ -168,8 +173,8 @@ def generate_dir_structure_doc(input_dir, attachment_dir):
     return output_path
 
 
-def _read_structure_entries(structure_path):
-    with open(structure_path, "r", encoding="utf-8") as handle:
+def _read_structure_entries(dir_structure_file_path):
+    with open(dir_structure_file_path, "r", encoding="utf-8") as handle:
         raw_lines = [line.rstrip("\n") for line in handle]
 
     start_index = None
@@ -211,44 +216,26 @@ def _read_structure_entries(structure_path):
             name = content.strip()
         entries.append((entry_id, name, depth, is_dir))
 
-    timestamp_value = ""
-    for idx, line in enumerate(raw_lines):
-        if line.strip() == "date & time:":
-            for next_line in raw_lines[idx + 1:]:
-                if next_line.strip():
-                    timestamp_value = next_line.strip()
-                    break
-            break
+    timestamp_suffix = format_timestamp_value(read_timestamp_from_structure(dir_structure_file_path))
 
-    return entries, timestamp_value
-
-
-def _format_timestamp_value(timestamp_value):
-    if not timestamp_value:
-        return datetime.now().strftime("%Y%m%d_%H%M%S")
-    try:
-        parsed = datetime.strptime(timestamp_value, "%Y-%m-%d %H:%M:%S")
-        return parsed.strftime("%Y%m%d_%H%M%S")
-    except ValueError:
-        return datetime.now().strftime("%Y%m%d_%H%M%S")
+    return entries, timestamp_suffix
 
 
 def restore_from_package(attachment_dir, output_dir):
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir)
 
-    structure_path = os.path.join(attachment_dir, "dir_structure.txt")
-    if not os.path.isfile(structure_path):
+    dir_structure_file_path = os.path.join(attachment_dir, "dir_structure.txt")
+    if not os.path.isfile(dir_structure_file_path):
         print("[Error] dir_structure.txt not found in: {0}".format(attachment_dir))
         return
 
-    entries, timestamp_value = _read_structure_entries(structure_path)
+    entries, timestamp_suffix = _read_structure_entries(dir_structure_file_path)
     package_dir = os.path.join(attachment_dir, "package")
     if not os.path.isdir(package_dir):
         print("[Error] package directory not found in: {0}".format(attachment_dir))
         return
 
-    timestamp_suffix = _format_timestamp_value(timestamp_value)
     output_root = os.path.join(output_dir, "package_{0}".format(timestamp_suffix))
     if os.path.isdir(output_root):
         print("Warning: output directory exists, clearing: {0}".format(output_root))
@@ -291,9 +278,9 @@ def restore_from_package(attachment_dir, output_dir):
     print("[Done] Output: {0}".format(output_root))
     print("[Done] Restored files: {0}, missing files: {1}".format(restored_count, missing_count))
 
-    structure_copy_name = "dir_structure_{0}.txt".format(timestamp_suffix)
-    structure_copy_path = os.path.join(output_dir, structure_copy_name)
-    shutil.copyfile(structure_path, structure_copy_path)
+    dir_structure_copy_name = "dir_structure_{0}.txt".format(timestamp_suffix)
+    dir_structure_copy_path = os.path.join(output_dir, dir_structure_copy_name)
+    shutil.copyfile(dir_structure_file_path, dir_structure_copy_path)
 
 
 

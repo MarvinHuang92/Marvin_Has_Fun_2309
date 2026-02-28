@@ -177,6 +177,9 @@ if "%sending_app%"=="1" (
 REM Validate attachments directory exists, if not, create it
 if not exist "%attch_dir%" mkdir "%attch_dir%" & echo [Info] Attachments directory created: %attch_dir%
 
+REM Validate test mode (Y/N)
+if /I not "%test_mode%"=="Y" if /I not "%test_mode%"=="N" set "VALID=0" & echo [Error] Test mode must be Y or N: %test_mode%
+
 if "%VALID%"=="0" (
 	echo.
 	echo [FAIL] Validation failed. Please correct inputs and retry.

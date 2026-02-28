@@ -8,12 +8,16 @@ import sys
 import shutil
 import win32com.client as win32  # pip install pywin32
 import smtplib
-from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 
-from common_config import delimiter_for_display, delimiter_for_html
+from common_config import (
+    delimiter_for_display,
+    delimiter_for_html,
+    format_timestamp_value,
+    read_timestamp_from_structure,
+)
 
 class MailInfo:
     def __init__(self, title, recipients, cc, html_msg, attachments=None):
@@ -130,33 +134,9 @@ def read_first_attachment_from_structure(dir_structure_file_path):
     return ""
 
 
-def read_timestamp_from_structure(dir_structure_file_path):
-    if not dir_structure_file_path or not os.path.isfile(dir_structure_file_path):
-        return ""
-    try:
-        with open(dir_structure_file_path, "r", encoding="utf-8") as handle:
-            lines = [line.rstrip("\n") for line in handle]
-    except OSError:
-        return ""
-
-    for idx, line in enumerate(lines):
-        if line.strip() == "date & time:":
-            for next_line in lines[idx + 1:]:
-                if next_line.strip():
-                    return next_line.strip()
-            return ""
-    return ""
-
-
 def build_mail_folder_name(dir_structure_file_path):
-    raw_timestamp = read_timestamp_from_structure(dir_structure_file_path)
-    if raw_timestamp:
-        try:
-            parsed = datetime.strptime(raw_timestamp, "%Y-%m-%d %H:%M:%S")
-            return "mail_{0}".format(parsed.strftime("%Y%m%d_%H%M%S"))
-        except ValueError:
-            pass
-    return "mail_{0}".format(datetime.now().strftime("%Y%m%d_%H%M%S"))
+    timestamp_suffix = format_timestamp_value(read_timestamp_from_structure(dir_structure_file_path))
+    return "mail_{0}".format(timestamp_suffix)
 
 
 def send_mail_via_Outlook(mail_info, attachment_dir='.'):
