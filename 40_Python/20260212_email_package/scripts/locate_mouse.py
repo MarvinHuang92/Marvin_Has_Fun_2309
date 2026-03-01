@@ -4,17 +4,17 @@
 
 import time
 import msvcrt
-import tkinter as tk
+# import tkinter as tk
 import pyautogui as pag
 
 
-def copy_to_clipboard(text):
-    root = tk.Tk()
-    root.withdraw()
-    root.clipboard_clear()
-    root.clipboard_append(text)
-    root.update()
-    root.destroy()
+# def copy_to_clipboard(text):
+#     root = tk.Tk()
+#     root.withdraw()
+#     root.clipboard_clear()
+#     root.clipboard_append(text)
+#     root.update()
+#     root.destroy()
 
 
 if __name__ == '__main__':
@@ -35,7 +35,7 @@ if __name__ == '__main__':
                         frozen_color = pag.pixel(frozen_x, frozen_y)
                         frozen = True
                         copied_text = "({}, {}) | RGB: {}".format(frozen_x, frozen_y, frozen_color)
-                        copy_to_clipboard(copied_text)
+                        # copy_to_clipboard(copied_text)
                         print("\n[Frozen] Copied to clipboard: {}".format(copied_text))
                     else:
                         frozen = False

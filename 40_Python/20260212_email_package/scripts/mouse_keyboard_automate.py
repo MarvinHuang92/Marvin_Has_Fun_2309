@@ -9,18 +9,24 @@ from common_config import (
     delimiter_for_display,
     format_timestamp_value,
     read_timestamp_from_structure,
+    Vector,
 )
 
 # 窗口按钮坐标（需要根据实际情况调整）
+foxmail_base_coords = Vector(0, 0)  # foxmail客户端左上角坐标
+compose_base_coords = Vector(515, 367)  # 新建邮件窗口左上角坐标
+attachment_base_coords = Vector(593, 188)  # 添加附件窗口左上角坐标
+
+# 以下为窗口内部相对坐标，不需要调整
 mouse_locations = [
-{"usage":"New Email", "coords": (188, 52)},  # 新建邮件按钮
-{"usage":"Recipient", "coords": (590, 404)},  # 收件人输入框
-{"usage":"Mail Subject", "coords": (590, 522)},  # 邮件主题输入框
-{"usage":"Add Attachment", "coords": (740, 350)},  # 添加附件按钮
-{"usage":"Attachment Folder", "coords": (871, 640)},  # 附件文件夹输入框
-{"usage":"Attachment Folder Inside", "coords": (871, 585)},  # 附件文件夹输入框内部坐标（用于点击以获得焦点）
-{"usage":"Attachment Confirm", "coords": (1270, 640)},  # 确认添加附件按钮
-{"usage":"Confirm Send", "coords": (527, 348)},  # 确认发送按钮
+{"usage":"New Email", "coords": foxmail_base_coords + (188, 52)},  # 新建邮件按钮
+{"usage":"Recipient", "coords": compose_base_coords + (135, 115)},  # 收件人输入框
+{"usage":"Mail Subject", "coords": compose_base_coords + (135, 230)},  # 邮件主题输入框
+{"usage":"Add Attachment", "coords": compose_base_coords + (280, 60)},  # 添加附件按钮
+{"usage":"Attachment Folder", "coords": attachment_base_coords + (290, 455)},  # 附件文件夹输入框
+{"usage":"Attachment Folder Inside", "coords": attachment_base_coords + (270, 390)},  # 附件文件夹输入框内部坐标（用于点击以获得焦点）
+{"usage":"Attachment Confirm", "coords": attachment_base_coords + (681, 455)},  # 确认添加附件按钮
+{"usage":"Confirm Send", "coords": compose_base_coords + (60, 55)},  # 确认发送按钮
 ]
 
 keyboard_inputs = [
@@ -30,7 +36,7 @@ keyboard_inputs = [
 ]
 
 # 发送邮件等待时间(s)
-send_mail_interval = 40
+send_mail_interval = 30
 
 def get_mouse_coords(usage):
     for item in mouse_locations:
@@ -139,7 +145,7 @@ if __name__ == '__main__':
             if send_mail_switch:  # to avoid delete files in demo mode
                 pag.hotkey("ctrl", "a")  # Ctrl + A to select all existing text
             pag.click(get_mouse_coords("Attachment Confirm"))  # Click "Confirm" button to add attachment
-            time.sleep(6)  # Wait for the attachment to be added
+            time.sleep(10)  # Wait for the attachment to be added
             
             # Send email or demo only?
             if send_mail_switch:
