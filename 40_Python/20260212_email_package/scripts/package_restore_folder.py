@@ -250,7 +250,8 @@ def restore_from_package(attachment_dir, output_dir):
 
     stack = []
     restored_count = 0
-    missing_count = 0
+    missing_file_count = 0
+    missing_dir_count = 0
     for index, entry in enumerate(entries):
         entry_id, name, depth, is_dir = entry
         next_depth = None
@@ -262,21 +263,31 @@ def restore_from_package(attachment_dir, output_dir):
             is_dir = next_depth > depth
         if is_dir:
             dir_path = os.path.join(output_root, *stack, name)
-            os.makedirs(dir_path, exist_ok=True)
-            stack = stack[:depth] + [name]
+            try:
+                os.makedirs(dir_path, exist_ok=True)
+                stack = stack[:depth] + [name]
+            except FileNotFoundError as e:
+                print('Error: id {0} directory "{1}": {2}'.format(entry_id, name, str(e)))
+                missing_dir_count += 1
+                continue
         else:
             file_path = os.path.join(output_root, *stack, name)
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
             src_path = _find_packaged_file_path(package_dir, entry_id, name)
             if (not src_path) or (not os.path.isfile(src_path)):
                 print('Warning: id {0} file "{1}" missing'.format(entry_id, name))
-                missing_count += 1
+                missing_file_count += 1
                 continue
-            shutil.copyfile(src_path, file_path)
-            restored_count += 1
+            try:
+                shutil.copyfile(src_path, file_path)
+                restored_count += 1
+            except FileNotFoundError as e:
+                print('Error: id {0} file "{1}": {2}'.format(entry_id, name, str(e)))
+                missing_file_count += 1
+                continue
 
     print("[Done] Output: {0}".format(output_root))
-    print("[Done] Restored files: {0}, missing files: {1}".format(restored_count, missing_count))
+    print("[Done] Restored files: {0}, missing files: {1}, missing directories: {2}".format(restored_count, missing_file_count, missing_dir_count))
 
     dir_structure_copy_name = "dir_structure_{0}.txt".format(timestamp_suffix)
     dir_structure_copy_path = os.path.join(output_dir, dir_structure_copy_name)
