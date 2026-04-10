@@ -76,17 +76,21 @@ def linear_interpolate(x_array, y_array, x_input):
 
 
 def solve_vx_ay(R=100.0,
-                 x_array=(5.0, 10.0, 20.0, 30.0),
-                 y_array=(3.0, 2.5, 2.2, 2.0),
+                 x_array=(6.0, 12.0, 30.0, 55.0),
+                 y_array=(3.5, 3.0, 2.5, 2.1),
                  tol=1e-4,
                  max_iter=100):
     """Solve the system:
-       vx = sqrt(ay / R)
+       vx = sqrt(ay * R)
        ay = linear_interpolate(x_array, y_array, vx)
 
-    Returns (vx, ay) with residual |vx^2 * R - interp(vx)| < tol.
-    Uses bisection on f(vx) = vx^2 * R - interp(vx).
+    Returns (vx, ay) with residual |vx^2 / R - interp(vx)| < tol.
+    Uses bisection on f(vx) = vx^2 / R - interp(vx).
     """
+    if float(R) < 10.0:
+        logging.warning("the input R value is too small, automatically adjusted to 10.0 m")
+        R = 10.0
+
     # ensure arrays are lists
     xs = list(x_array)
     ys = list(y_array)
@@ -97,7 +101,7 @@ def solve_vx_ay(R=100.0,
 
     def f(vx):
         ay_interp = linear_interpolate(xs, ys, vx)
-        return vx * vx * float(R) - ay_interp
+        return vx * vx / float(R) - ay_interp
 
     f_left = f(left)
     f_right = f(right)
@@ -114,13 +118,13 @@ def solve_vx_ay(R=100.0,
         vx = (left + right) / 2.0
         for _ in range(max_iter):
             ay = linear_interpolate(xs, ys, vx)
-            # f = vx^2*R - ay; derivative df/dvx = 2*vx*R - ay'(vx)
+            # f = vx^2/R - ay; derivative df/dvx = 2*vx/R - ay'(vx)
             # approximate ay' by finite difference
             h = 1e-6
             ay_plus = linear_interpolate(xs, ys, vx + h)
             day_dvx = (ay_plus - ay) / h
-            df = vx * vx * float(R) - ay
-            ddf = 2.0 * vx * float(R) - day_dvx
+            df = vx * vx / float(R) - ay
+            ddf = 2.0 * vx / float(R) - day_dvx
             if abs(df) < tol:
                 return float(vx), float(ay)
 
@@ -220,6 +224,24 @@ def interactive_solve():
     results = []
     if not isinstance(R_val, (list, tuple)):
         R_val = [R_val]
+
+    adjusted_R_val = []
+    for R_item in R_val:
+        if float(R_item) < 10.0:
+            logging.warning('the input R value is too small, automatically adjusted to 10.0 m')
+            adjusted_R_val.append(10.0)
+        else:
+            adjusted_R_val.append(float(R_item))
+    R_val = adjusted_R_val
+
+    # remove duplicates in R_val while preserving order
+    seen = set()
+    R_val_unique = []
+    for R_item in R_val:
+        if R_item not in seen:
+            seen.add(R_item)
+            R_val_unique.append(R_item)
+    R_val = R_val_unique
 
     for R_item in R_val:
         vx, ay = solve_vx_ay(R=float(R_item), x_array=x_array, y_array=y_array)
