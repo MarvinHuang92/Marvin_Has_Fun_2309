@@ -212,12 +212,6 @@ def linear_interpolate_2d(x_array, y_array, z_array, x_input, y_input):
     # replace zs2d with final
     zs2d = zs2d_final
 
-    # Degenerate case: single x value -> use 1D along y
-    if nx == 1:
-        logging.info('x_array has a single value; x_input will be ignored and 1D interpolation over y is used')
-        # zs2d[0] corresponds to the single x row
-        return linear_interpolate(ys, zs2d[0], y_input)
-
     # Otherwise perform bilinear interpolation on grid defined by xs, ys
     # find x indices
     if x_input < xs[0]:
@@ -225,8 +219,13 @@ def linear_interpolate_2d(x_array, y_array, z_array, x_input, y_input):
     elif x_input > xs[-1]:
         ix0, ix1 = nx - 2, nx - 1
     else:
-        ix1 = next(i for i, xv in enumerate(xs) if xv > x_input)
-        ix0 = ix1 - 1
+        ix1 = next((i for i, xv in enumerate(xs) if xv > x_input), None)
+        if ix1 is None:
+            # x_input equals the last grid x value (no xv > x_input); clamp to last interval
+            ix1 = nx - 1
+            ix0 = nx - 2
+        else:
+            ix0 = ix1 - 1
 
     # find y indices (reuse logic from 1D)
     if y_input < ys[0]:
@@ -234,8 +233,13 @@ def linear_interpolate_2d(x_array, y_array, z_array, x_input, y_input):
     elif y_input > ys[-1]:
         iy0, iy1 = ny - 2, ny - 1
     else:
-        iy1 = next(i for i, yv in enumerate(ys) if yv > y_input)
-        iy0 = iy1 - 1
+        iy1 = next((i for i, yv in enumerate(ys) if yv > y_input), None)
+        if iy1 is None:
+            # y_input equals the last grid y value; clamp to last interval
+            iy1 = ny - 1
+            iy0 = ny - 2
+        else:
+            iy0 = iy1 - 1
 
     # Quick-return: if x_input and y_input exactly match grid node, return stored value
     # (use integer equality on floats as the code currently does elsewhere)
