@@ -7,38 +7,53 @@ import pandas as pd
 import pyautogui as pag
 
 from common_config import (
-    format_timestamp_value,
+    VideoInfo,
     Vector,
 )
 
 # 窗口按钮坐标（需要根据实际情况调整）
-record_timer_base_coords = Vector(0, 0)  # 录屏计时器左上角坐标
+# record_timer_base_coords = Vector(0, 0)  # 录屏计时器左上角坐标，此处仅默认值，会在脚本开始运行时询问用户
 explorer_base_coords = Vector(0, 0)  # 副屏网页播放器左上角坐标
+safe_coords_when_recording = Vector(0, 0)  # 录屏时鼠标安全位置坐标，避免误操作导致录屏中断
 
 # 以下为窗口内部相对坐标，不需要调整
 mouse_locations = [
-{"usage":"Set Hour", "coords": record_timer_base_coords + (235, 215)},  # 录屏计时器输入框：时
-{"usage":"Set Minute", "coords": record_timer_base_coords + (392, 215)},  # 录屏计时器输入框：分
-{"usage":"Set Second", "coords": record_timer_base_coords + (540, 215)},  # 录屏计时器输入框：秒
+{"usage":"Set Hour", "coords": Vector(0, 0)},  # 此处仅默认值，会在脚本开始运行时询问用户
+{"usage":"Set Minute", "coords": Vector(0, 0)},  # 此处仅默认值，会在脚本开始运行时询问用户
+{"usage":"Set Second", "coords": Vector(0, 0)},  # 此处仅默认值，会在脚本开始运行时询问用户
+{"usage":"Start Record", "coords": Vector(0, 0)},  # 此处仅默认值，会在脚本开始运行时询问用户
+{"usage":"Explorer Tab", "coords": explorer_base_coords + (0, 0)},  # 浏览器网页坐标，用于激活和关闭标签页
+{"usage":"Maximize Screen", "coords": explorer_base_coords + (0, 0)},  # 浏览器视频全屏按钮
+{"usage":"Play Video", "coords": explorer_base_coords + (0, 0)},  # 浏览器视频播放按钮
+{"usage":"Safe Position", "coords": safe_coords_when_recording},  # 录屏时鼠标安全位置
 ]
 
 keyboard_inputs = [
-{"usage":"Input Hour", "input": "example@example.com"},  # 录屏计时器输入框：时
-{"usage":"Input Minute", "input": "example@example.com"},  # 录屏计时器输入框：分
-{"usage":"Input Second", "input": "example@example.com"},  # 录屏计时器输入框：秒
-# {"usage":"Mail Subject", "input": "dummy"},  # 邮件主题输入框
-# {"usage":"Attachment Folder", "input": "dummy"},  # 附件文件夹输入框
+{"usage":"Input Hour", "input": "0"},  # 录屏计时器输入框：时(仅初始值)
+{"usage":"Input Minute", "input": "0"},  # 录屏计时器输入框：分(仅初始值)
+{"usage":"Input Second", "input": "0"},  # 录屏计时器输入框：秒(仅初始值)
 ]
 
 # 等待时间(s)
-video_duration_offset = 3
-interval_after_recording = 5  # 与上一个参数累加
+video_duration_offset = 5  # 录屏时间比视频时长多等待的时间，确保录屏结束前视频就结束了
+interval_after_recording = 5  # 两次录屏之间的间隔时间
 
 def get_mouse_coords(usage):
     for item in mouse_locations:
         if item["usage"] == usage:
             return item["coords"]
     return None
+
+def set_mouse_coords(usage, value):
+    global mouse_locations
+    for item in mouse_locations:
+        if item["usage"] == usage:
+            index = mouse_locations.index(item)
+            break
+    else:
+        return False
+    mouse_locations[index]["coords"] = value
+    return True
 
 def get_keyboard_input(usage):
     for item in keyboard_inputs:
@@ -68,117 +83,120 @@ if __name__ == '__main__':
 
     # Get inputs from command line arguments
     if len(sys.argv) != 2:
-        print('Usage: python recorder.py <INPUT_CSV>')
+        print('Usage: python recorder.py <input_csv>')
         sys.exit(1)
     input_csv = str(sys.argv[1]).strip()  # Input CSV file
 
     if not os.path.isfile(input_csv):
         print('[Error] Input CSV file does not exist: %s' % input_csv)
     else:
+        # get the coordinates of the recording timer from user input, and save to global variable
+        while True:
+            try:
+                user_input = input('Please enter the base coordinates of the recording timer (format: x,y): ')
+                x_str, y_str = user_input.split(',')
+                x = int(x_str.strip())
+                y = int(y_str.strip())
+                print('Recording timer coordinates set to: (%d, %d)' % (x, y))
+                set_mouse_coords("Set Hour", Vector(x, y) + (235, 215))  # 录屏计时器输入框：时
+                set_mouse_coords("Set Minute", Vector(x, y) + (392, 215))  # 录屏计时器输入框：分
+                set_mouse_coords("Set Second", Vector(x, y) + (540, 215))  # 录屏计时器输入框：秒
+                set_mouse_coords("Start Record", Vector(x, y) + (540, 215))  # 录屏开始按钮坐标
+                break
+            except Exception as e:
+                print('[Error] Invalid input format. Please enter coordinates in the format: x,y (e.g., 100,200). Error details: %s' % e)
+
         # get video info from input csv
-        # Read first row and extract columns 2-5 (index 1-4)
+        # Skip the first row, then read columns 2-5 (index 1-4) for every remaining row
         try:
             df = pd.read_csv(input_csv, header=None, dtype=str)
-            # Ensure there is at least one row
-            if df.shape[0] < 1:
-                raise ValueError('Input CSV is empty')
+            if df.shape[0] < 2:
+                raise ValueError('Input CSV has no data rows after skipping the first row')
 
-            row0 = df.iloc[0]
-            # Columns 2-5 (1-based) -> indices 1,2,3,4
-            video_name = row0[1] if 1 in row0.index else ''
-            video_duration_hour = row0[2] if 2 in row0.index else '0'
-            video_duration_min = row0[3] if 3 in row0.index else '0'
-            video_duration_sec = row0[4] if 4 in row0.index else '0'
+            video_info_list = []
+            for video_index, (_, row) in enumerate(df.iloc[1:].iterrows(), start=1):
+                # Columns 2-5 (1-based) -> indices 1,2,3,4
+                video_name = row[1] if 1 in row.index else ''
+                if not str(video_name).strip():
+                    video_name = 'video_%d' % video_index
+                video_duration_hour = row[2] if 2 in row.index else '0'
+                video_duration_min = row[3] if 3 in row.index else '0'
+                video_duration_sec = row[4] if 4 in row.index else '0'
 
-            # Normalize numeric duration parts to integers (if possible)
-            try:
-                video_duration_hour = int(float(video_duration_hour))
-            except Exception:
-                video_duration_hour = 0
-            try:
-                video_duration_min = int(float(video_duration_min))
-            except Exception:
-                video_duration_min = 0
-            try:
-                video_duration_sec = int(float(video_duration_sec))
-            except Exception:
-                video_duration_sec = 0
+                try:
+                    video_duration_hour = int(float(video_duration_hour))
+                except Exception:
+                    video_duration_hour = 0
+                try:
+                    video_duration_min = int(float(video_duration_min))
+                except Exception:
+                    video_duration_min = 0
+                try:
+                    video_duration_sec = int(float(video_duration_sec))
+                except Exception:
+                    video_duration_sec = 0
+
+                video_info_list.append(
+                    VideoInfo(
+                        video_name,
+                        video_duration_hour,
+                        video_duration_min,
+                        video_duration_sec,
+                    )
+                )
 
         except Exception as e:
             print('[Error] Failed to read input CSV: %s' % e)
             sys.exit(1)
+
+        # for debug
+        for video_info in video_info_list:
+            video_info.print_info()
         
-        print(video_name)
-        print(video_duration_hour)
-        print(video_duration_min)
-        print(video_duration_sec)
+        # Start mouse and keyboard automation loop, to record videos
+        i = 1
+        video_counts = len(video_info_list)
+        for video_info in video_info_list:
+            print("[%d%%] [%d/%d] Processing video record: %s" % (100.0*i/video_counts, i, video_counts, video_info.name))
 
-        # video_duration_hour = pd.read_csv(input_csv)['video_duration'].iloc[2] # 第3列，视频时长：时
-        # video_duration_min = pd.read_csv(input_csv)['video_duration'].iloc[2] # 第4列，视频时长：分
-        # video_duration_sec = pd.read_csv(input_csv)['video_duration'].iloc[2] # 第5列，视频时长：秒
-        # timestamp_suffix = format_timestamp_value(read_timestamp_from_structure(dir_structure_file_path))
-        # mail_package_root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "mails/mail_%s/package" % timestamp_suffix))
-        # print('Attachment folder: %s' % attachment_dir)
-        # print('Mail package root directory: %s' % mail_package_root_dir)
+            # Set video duration input for keyboard automation
+            video_info.offset_duration(video_duration_offset)  # 计算添加偏移量后的视频时长
+            set_keyboard_input("Input Hour", video_info.duration_hour)
+            set_keyboard_input("Input Minute", video_info.duration_min)
+            set_keyboard_input("Input Second", video_info.duration_sec)
 
-        # # get mail package total count
-        # mail_packages_count = 0
-        # if os.path.isdir(mail_package_root_dir):
-        #     for item in os.listdir(mail_package_root_dir):
-        #         item_path = os.path.join(mail_package_root_dir, item)
-        #         if os.path.isdir(item_path):
-        #             mail_packages_count += 1
-        # print('Total mail packages found: %d' % mail_packages_count)
-        
-        # # Set recipient input for keyboard automation
-        # set_keyboard_input("Recipient", receiver)
+            # Mouse and keyboard operations
+            pag.click(get_mouse_coords("Set Hour"))  # Click hour input box to set focus
+            pag.typewrite(get_keyboard_input("Input Hour"))  # Type hour value
+            time.sleep(1)
+            pag.click(get_mouse_coords("Set Minute"))  # Click minute input box to set focus
+            pag.typewrite(get_keyboard_input("Input Minute"))  # Type minute value
+            time.sleep(1)
+            pag.click(get_mouse_coords("Set Second"))  # Click second input box to set focus
+            pag.typewrite(get_keyboard_input("Input Second"))  # Type second value
+            time.sleep(1)
 
-        # # Start mouse and keyboard automation loop, to send email
-        # for i in range(start_attch_id, mail_packages_count + 1):
-        #     mail_subject = "mail_{0}".format(i)
-        #     mail_package_dir = os.path.join(mail_package_root_dir, str(i))
-        #     print("[%d%%] [%d/%d] Processing mail package: %s" % (100.0*i/mail_packages_count, i, mail_packages_count, mail_package_dir))
+            # activate explorer tab
+            pag.click(get_mouse_coords("Explorer Tab"))
+            time.sleep(1)
 
-        #     # Set mail subject and attachment folder input for keyboard automation
-        #     set_keyboard_input("Mail Subject", mail_subject)
-        #     set_keyboard_input("Attachment Folder", mail_package_dir)
+            # maximize video screen
+            pag.click(get_mouse_coords("Maximize Screen"))
+            time.sleep(1)
 
-        #     # Mouse and keyboard operations
-        #     pag.click(get_mouse_coords("New Email"))  # Click "New Email" button
-        #     time.sleep(2)  # Wait for the new email dialog to open
+            # start recording (also starts the video)
+            pag.click(get_mouse_coords("Start Record"))
+            pag.click(get_mouse_coords("Play Video"))
+            # move mouse to safe position
+            pag.moveTo(get_mouse_coords("Safe Position"))
+            time.sleep(video_info.duration + video_duration_offset + interval_after_recording)
 
-        #     # recipient
-        #     pag.click(get_mouse_coords("Recipient"))  # Click recipient input box
-        #     pag.typewrite(get_keyboard_input("Recipient"))  # Type recipient email address
+            # close current explorer tab
+            pag.click(get_mouse_coords("Explorer Tab"))  # select current explorer tab
+            pag.hotkey('ctrl', 'w')  # press Ctrl + W to close the current tab
+            time.sleep(1)
 
-        #     # mail subject
-        #     pag.click(get_mouse_coords("Mail Subject"))  # Click mail subject input box
-        #     pag.typewrite(get_keyboard_input("Mail Subject"))  # Type mail subject
-
-        #     # attachment
-        #     pag.click(get_mouse_coords("Add Attachment"))  # Click "Add Attachment" button
-        #     time.sleep(2)  # Wait for the file dialog to open
-        #     pag.click(get_mouse_coords("Attachment Folder"))  # Click "Attachment Folder" input box
-        #     if send_mail_switch:  # to avoid delete files in demo mode
-        #         pag.hotkey("ctrl", "a")  # Ctrl + A to select all existing text
-        #         pag.hotkey("del")  # Delete existing text
-        #     pag.typewrite(get_keyboard_input("Attachment Folder"))  # Type attachment folder path
-        #     pag.hotkey("enter")  # Press Enter to confirm the folder path
-        #     pag.click(get_mouse_coords("Attachment Folder Inside"))  # Click "Attachment Folder" input box inside the file dialog to ensure it has focus
-        #     if send_mail_switch:  # to avoid delete files in demo mode
-        #         pag.hotkey("ctrl", "a")  # Ctrl + A to select all existing text
-        #     pag.click(get_mouse_coords("Attachment Confirm"))  # Click "Confirm" button to add attachment
-        #     time.sleep(10)  # Wait for the attachment to be added
-            
-        #     # Send email or demo only?
-        #     if send_mail_switch:
-        #         pag.click(get_mouse_coords("Confirm Send"))  # Click "Send" button to send email
-        #         time.sleep(send_mail_interval)
-        #     else:
-        #         print('[Demo] Email not sent. The loop will break after the first iteration.')
-        #         break  # Demo only, break after the first iteration
-
-        # print("") # blank line
+        print("") # blank line
             
 
     # End of script

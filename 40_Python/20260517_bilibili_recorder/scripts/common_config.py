@@ -3,15 +3,6 @@
 # import os
 from datetime import datetime
 
-def format_timestamp_value(timestamp_value):
-    if not timestamp_value:
-        return datetime.now().strftime("%Y%m%d_%H%M%S")
-    try:
-        parsed = datetime.strptime(timestamp_value, "%Y-%m-%d %H:%M:%S")
-        return parsed.strftime("%Y%m%d_%H%M%S")
-    except ValueError:
-        return datetime.now().strftime("%Y%m%d_%H%M%S")
-
 class VideoInfo():
     # 成员变量类型声明
     name: str
@@ -26,6 +17,22 @@ class VideoInfo():
         self.duration_min = duration_min
         self.duration_sec = duration_sec
         self.duration = duration_sec + duration_min * 60 + duration_hour * 3600 
+    
+    def offset_duration(self, offset_sec: int):
+        self.duration += offset_sec
+        self.duration_hour = self.duration // 3600
+        self.duration_min = (self.duration % 3600) // 60
+        self.duration_sec = self.duration % 60
+
+    # 输出视频信息，用于debug
+    def print_info(self):
+        print('Video Name: %s, Duration: %02d:%02d:%02d (Total Seconds: %d)' % (
+            self.name,
+            self.duration_hour,
+            self.duration_min,
+            self.duration_sec,
+            self.duration
+        ))
 
 class Vector(tuple):
     """
