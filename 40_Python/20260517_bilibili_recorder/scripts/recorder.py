@@ -75,10 +75,10 @@ if __name__ == '__main__':
                 x = int(x_str.strip())
                 y = int(y_str.strip())
                 print('OBS Recording timer coordinates set to: (%d, %d)' % (x, y))
-                mouse_locations.set_mouse_coords("Set Hour", Vector(x, y) + (220, 170))  # 录屏计时器输入框：时
-                mouse_locations.set_mouse_coords("Set Minute", Vector(x, y) + (372, 170))  # 录屏计时器输入框：分
-                mouse_locations.set_mouse_coords("Set Second", Vector(x, y) + (515, 170))  # 录屏计时器输入框：秒
-                mouse_locations.set_mouse_coords("Start Record", Vector(x, y) + (640, 170))  # 录屏开始按钮坐标
+                mouse_locations.set_mouse_coords("Set Hour", Vector(x, y) + (151, 143))  # 录屏计时器输入框：时
+                mouse_locations.set_mouse_coords("Set Minute", Vector(x, y) + (264, 143))  # 录屏计时器输入框：分
+                mouse_locations.set_mouse_coords("Set Second", Vector(x, y) + (374, 143))  # 录屏计时器输入框：秒
+                mouse_locations.set_mouse_coords("Start Record", Vector(x, y) + (520, 143))  # 录屏开始按钮坐标
                 break
             except Exception as e:
                 print('[Error] Invalid input format. Please enter coordinates in the format: x,y (e.g., 100,200). Error details: %s' % e)
