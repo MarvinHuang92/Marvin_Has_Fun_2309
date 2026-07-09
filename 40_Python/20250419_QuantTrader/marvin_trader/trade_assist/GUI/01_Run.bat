@@ -3,12 +3,17 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 REM Location for storing last inputs (next to this script)
 set SCRIPT_DIR=%~dp0
+set DATA_DIR=%SCRIPT_DIR%data
+if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
 set CFG_DIR=%SCRIPT_DIR%cfg
 if not exist "%CFG_DIR%" mkdir "%CFG_DIR%"
 set HISTORY_FILE=%CFG_DIR%\history_input_01.txt
 
 REM Defaults
-set DEF_PY=C:/TCC/Tools/python3/3.7.4-29_WIN64_2/python.exe
+@REM 公司电脑
+@REM set DEF_PY=C:/TCC/Tools/python3/3.7.4-29_WIN64_2/python.exe
+@REM 个人电脑
+set DEF_PY=D:/Programming/Python_dir_38/python.exe
 
 REM Load history if present (skip first two header lines)
 if exist "%HISTORY_FILE%" (
