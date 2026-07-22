@@ -3,16 +3,18 @@
 
 ==========================
 
-01
-批量搜索word文档中的关键字，将各个文档中出现次数列成表格，提升手动检查的效率
+01-02
+批量搜索文档中的关键字，将各个文档中出现次数列成表格，提升手动检查的效率
 
-将关键字列表，维护在“cfg/word_keywords.txt”文件中
-更新docx的输入路径，在“input/directories”文件中
-然后运行“01_Search_Word_Doc.bat”即可
+将关键字列表，维护在“cfg/word_excel_keywords.txt”文件中
+更新docx的输入路径，在“input/word_directories”文件中
+更新xlsx的输入路径，在“input/excel_directories”文件中
+然后运行 “01_Search_Word_Docx.bat” 或 “02_Search_Excel_Xlsx.bat” 即可
 
-【目前可以搜索正文，表格，页眉页脚，若要扩展其他元素，参考99_开发扩展信息】
-
+【目前docx可以搜索正文，表格，页眉页脚，若要扩展其他元素，参考99_开发扩展信息】
 【注意doc格式文件可能无法处理，需要手动检查】
 无法处理的文件清单，会输出在“output/failed_files.txt”
+
+【xlsx的输出结果不会自动高亮，可以使用“条件格式” -> 不等于0的格子高亮，自行处理一下】
 
 ==========================

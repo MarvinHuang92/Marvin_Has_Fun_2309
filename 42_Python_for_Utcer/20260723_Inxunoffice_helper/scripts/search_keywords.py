@@ -11,13 +11,18 @@ import pandas as pd
 print_detailed_info = False  # Set to True to print detailed information during processing
 
 # get the input directory and output directory from command line arguments
-if len(sys.argv) != 4:
-    print("Usage: python search_word_doc.py <input_directory> <output_directory> <keywords>")
+if len(sys.argv) != 5:
+    print("Usage: python search_keywords.py <file_type> <input_directory> <output_directory> <keywords>")
     sys.exit(1)
 
-input_directory = sys.argv[1]
-output_directory = sys.argv[2]
-keywords = sys.argv[3]
+file_type = sys.argv[1]
+input_directory = sys.argv[2]
+output_directory = sys.argv[3]
+keywords = sys.argv[4]
+
+if file_type not in ['docx', 'xlsx']:
+    print(f"Error: Unsupported file type - {file_type}. Supported types are 'docx' and 'xlsx'.")
+    sys.exit(1)
 
 # get keywords from the keywords file
 try:
@@ -33,8 +38,12 @@ raw_results = []
 failed_files = []
 
 # clean output files
-output_file_path = os.path.join(output_directory, 'word_search_results.xlsx')
-output_failed_file_path = os.path.join(output_directory, 'word_failed_files.txt')
+if file_type == 'docx':
+    output_file_path = os.path.join(output_directory, 'word_search_results.xlsx')
+    output_failed_file_path = os.path.join(output_directory, 'word_failed_files.txt')
+elif file_type == 'xlsx':
+    output_file_path = os.path.join(output_directory, 'excel_search_results.xlsx')
+    output_failed_file_path = os.path.join(output_directory, 'excel_failed_files.txt')
 print("\nCleaning up existing output files if they exist...")
 if os.path.exists(output_file_path):
     os.remove(output_file_path)
@@ -84,7 +93,7 @@ def get_header_footer_content(doc):
 # search through Word documents in the input directory
 for input_directory in input_directories:
     for filename in os.listdir(input_directory):
-        if filename.endswith('.docx') or filename.endswith('.doc'):
+        if file_type == 'docx' and (filename.endswith('.docx') or filename.endswith('.doc')):
             file_path = os.path.join(input_directory, filename)
             # Here you would add the logic to open the Word document and search for keywords
             # For example, using python-docx library to read the document and search for keywords
@@ -114,6 +123,29 @@ for input_directory in input_directories:
                     if times_found_total > 0 and print_detailed_info:
                         print(f"Found '{keyword}' {times_found_total} times in {file_path}")
                     raw_results.append((input_directory, filename, keyword, times_found_total))
+
+        elif file_type == 'xlsx' and (filename.endswith('.xlsx') or filename.endswith('.xls')):
+            file_path = os.path.join(input_directory, filename)
+            # Here you would add the logic to open the Excel document and search for keywords
+            # This is a placeholder for the actual search logic
+            try:
+                print(f"Searching in {file_path}...")
+                xls = pd.ExcelFile(file_path)
+            except Exception as e:
+                print("") # print a blank line for better readability
+                print(f"[WARNING] Failed to process {file_path}: {e}")
+                print("")
+                failed_files.append(file_path)
+                xls = None
+            
+            if xls is not None:
+                for sheet_name in xls.sheet_names:
+                    df = pd.read_excel(xls, sheet_name=sheet_name)
+                    for keyword in keyword_list:
+                        times_found_total = df.apply(lambda row: row.astype(str).str.contains(keyword, case=False).sum(), axis=1).sum()
+                        if times_found_total > 0 and print_detailed_info:
+                            print(f"Found '{keyword}' {times_found_total} times in {file_path} (Sheet: {sheet_name})")
+                        raw_results.append((input_directory, filename, keyword, times_found_total))
 
 # convert the raw results to a table format:
 # each row index will be filename, and each column index will be a keyword, 
