@@ -6,7 +6,7 @@
 01-02
 批量搜索文档中的关键字，将各个文档中出现次数列成表格，提升手动检查的效率
 
-将关键字列表，维护在“cfg/word_excel_keywords.txt”文件中
+将关键字列表，维护在“input/word_excel_keywords.txt”文件中
 更新docx的输入路径，在“input/word_directories”文件中
 更新xlsx的输入路径，在“input/excel_directories”文件中
 然后运行 “01_Search_Word_Docx.bat” 或 “02_Search_Excel_Xlsx.bat” 即可
@@ -22,10 +22,20 @@
 03
 批量重命名文档，添加后缀_OK
 
-更新输入路径，在“input/confirm_ok_directory.txt”文件中
+更新输入路径，在“input/confirm_ok_directories.txt”文件中
 然后运行 “03_Confirm_OK.bat”
 
 【只会处理扩展名是 doc docx xls xlsx 的文件】
 【如果已经存在_OK后缀，会忽略，不会重复添加】
+
+==========================
+
+04
+自动将修改后的文档整理打包
+
+更新输入路径，在“input/auto_zip_directories.txt”文件中
+然后运行 “04_Auto_Zip.bat”
+
+输出在output目录里
 
 ==========================

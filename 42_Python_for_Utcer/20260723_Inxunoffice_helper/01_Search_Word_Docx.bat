@@ -11,7 +11,7 @@ REM Defaults
 set DEF_PY=D:/Programming/Python_dir_38/python.exe
 set DEF_INPUT_DIR=./input/word_directories.txt
 set DEF_OUTPUT_DIR=./output
-set DEF_KW_FILE=./cfg/word_excel_keywords.txt
+set DEF_KW_FILE=./input/word_excel_keywords.txt
 set DEF_INSTALL_DEPS=Y
 
 set file_type=docx
