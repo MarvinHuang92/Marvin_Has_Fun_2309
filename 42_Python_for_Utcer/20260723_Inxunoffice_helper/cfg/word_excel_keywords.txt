@@ -19,4 +19,5 @@ beijing
 shanghai
 gatek
 xsb
+xsb automotive
 New Shibao Electric Power Steering
