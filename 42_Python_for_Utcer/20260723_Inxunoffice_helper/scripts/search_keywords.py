@@ -91,6 +91,8 @@ def get_header_footer_content(doc):
     return headers_footers
 
 # search through Word documents in the input directory
+count_successful_files = 0
+count_failed_files = 0
 for input_directory in input_directories:
     for filename in os.listdir(input_directory):
         if file_type == 'docx' and (filename.endswith('.docx') or filename.endswith('.doc')):
@@ -106,6 +108,7 @@ for input_directory in input_directories:
                 print(f"[WARNING] Failed to process {file_path}: {e}")
                 print("")
                 failed_files.append(file_path)
+                count_failed_files += 1
                 doc = None
             
             if doc is not None:
@@ -123,6 +126,7 @@ for input_directory in input_directories:
                     if times_found_total > 0 and print_detailed_info:
                         print(f"Found '{keyword}' {times_found_total} times in {file_path}")
                     raw_results.append((input_directory, filename, keyword, times_found_total))
+                count_successful_files += 1
 
         elif file_type == 'xlsx' and (filename.endswith('.xlsx') or filename.endswith('.xls')):
             file_path = os.path.join(input_directory, filename)
@@ -136,6 +140,7 @@ for input_directory in input_directories:
                 print(f"[WARNING] Failed to process {file_path}: {e}")
                 print("")
                 failed_files.append(file_path)
+                count_failed_files += 1
                 xls = None
             
             if xls is not None:
@@ -146,6 +151,7 @@ for input_directory in input_directories:
                         if times_found_total > 0 and print_detailed_info:
                             print(f"Found '{keyword}' {times_found_total} times in {file_path} (Sheet: {sheet_name})")
                         raw_results.append((input_directory, filename, keyword, times_found_total))
+                count_successful_files += 1
 
 # convert the raw results to a table format:
 # each row index will be filename, and each column index will be a keyword, 
@@ -165,6 +171,9 @@ results_table = results_table.style.applymap(highlight_non_zero)
 # export the results to a excel file in the output directory
 results_table.to_excel(output_file_path, index=False)
 print(f"\nSearch results exported to {output_file_path}")
+
+print(f"\n[SUMMARY] Successfully processed {count_successful_files} files.")
+print(f"[SUMMARY] Failed to process {count_failed_files} files.")
 
 if failed_files:
     print(f"\n[WARNING] Failed to process the following files:")
