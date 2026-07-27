@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import math
 import os
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import gui as ui
 from common_config import *
-
 
 def _parse_decimal(value):
     text = (value or "").strip()
@@ -16,6 +16,8 @@ def _parse_decimal(value):
         text = text.replace(",", "")
     if text.startswith("."):
         text = "0" + text
+    if text.endswith("%"):
+            text = text.replace("%", "")
     try:
         return Decimal(text)
     except InvalidOperation:
@@ -32,9 +34,9 @@ def _format_decimal_var(var, places, minimum=None, label=""):
         value = _parse_decimal(raw_text)
     if value is None:
         return None
-    if minimum is not None and value == 0:
+    if minimum is not None and value < Decimal(str(minimum)):
         if label:
-            logging.info("%s was 0, normalized to minimum %s", label, minimum)
+            logging.info("%s was normalized to minimum %s", label, minimum)
         value = Decimal(str(minimum))
     quant = Decimal("1").scaleb(-places)
     value = value.quantize(quant, rounding=ROUND_HALF_UP)
@@ -48,8 +50,11 @@ def _normalize_numeric_fields():
     _format_decimal_var(ui.ta.option_strike_price_var, 3, minimum="0.001", label="期权行权价")
     _format_decimal_var(ui.ta.option_buy_price_var, 4, minimum="0.0001", label="期权买入价")
     _format_decimal_var(ui.ta.option_current_price_var, 4, minimum="0.0001", label="期权当前价")
+    _format_decimal_var(ui.ta.option_expiry_var, 0, minimum=None, label="期权到期时间")
+    _format_decimal_var(ui.ta.option_volatility_var, 2, minimum="1.00", label="期权波动率")
+    _format_decimal_var(ui.ta.option_rho_var, 2, minimum=None, label="期权rho")
     _format_decimal_var(ui.ta.total_funds_var, 2, minimum=None, label="资金总量")
-    _format_decimal_var(ui.ta.trade_loss_var, 2, minimum="0.00", label="交易损耗")
+    _format_decimal_var(ui.ta.trade_loss_var, 2, minimum=None, label="交易损耗")
 
 
 def _update_target_code():
@@ -71,42 +76,101 @@ def _percent_text(value, places):
     return f"{text}%"
 
 
-def _estimate_option_price(stock_price):
+# def _estimate_option_price(stock_price):
+#     """
+#     简化版线性期权定价模型。
+#     锚点:
+#     - 2.166 -> 0.0812
+#     - 2.328 -> 0.0369
+#     """
+#     if stock_price is None:
+#         return None
+
+#     x1 = Decimal("2.166")
+#     y1 = Decimal("0.0812")
+#     x2 = Decimal("2.328")
+#     y2 = Decimal("0.0369")
+
+#     if x2 == x1:
+#         return y1.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+#     slope = (y2 - y1) / (x2 - x1)
+#     estimated = y1 + slope * (stock_price - x1)
+#     if estimated < Decimal("0.0001"):
+#         estimated = Decimal("0.0001")
+#     return estimated.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+def _norm_cdf(x):
+    """标准正态分布的累积分布函数 (CDF)"""
+    return Decimal("0.5") * (Decimal("1") + Decimal(str(math.erf(float(x) / math.sqrt(2)))))
+
+def _estimate_option_price_BS(type, stock_price, strike_price, time_to_expiry, risk_free_rate, volatility):
     """
-    简化版线性期权定价模型。
-    锚点:
-    - 2.166 -> 0.0812
-    - 2.328 -> 0.0369
+    Black-Scholes 期权定价模型。
+    参数:
+    - type: "call" 或 "put"
+    - stock_price: 股票当前价格
+    - strike_price: 期权行权价格
+    - time_to_expiry: 距离到期时间 (以年为单位)
+    - risk_free_rate: 无风险利率 (以小数表示，例如 0.05 表示 5%)
+    - volatility: 股票价格波动率 (以小数表示，例如 0.2 表示 20%)
+    返回:
+    - 期权价格 (Decimal 类型)
     """
-    if stock_price is None:
+
+    d1 = (Decimal(stock_price).ln() - Decimal(strike_price).ln() + (risk_free_rate + (volatility ** 2) / 2) * time_to_expiry) / (volatility * Decimal(time_to_expiry).sqrt())
+    d2 = d1 - volatility * Decimal(time_to_expiry).sqrt()
+    # debug info
+    logging.info("d1: %s", d1)
+    logging.info("d2: %s", d2)
+    if type == "call":
+        call_price = stock_price * _norm_cdf(d1) - strike_price * (-risk_free_rate * time_to_expiry).exp() * _norm_cdf(d2)
+        return call_price.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    elif type == "put":
+        put_price = strike_price * (-risk_free_rate * time_to_expiry).exp() * _norm_cdf(-d2) - stock_price * _norm_cdf(-d1)
+        return put_price.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    else:
+        logging.info("Invalid option type: %s", type)
         return None
 
-    x1 = Decimal("2.166")
-    y1 = Decimal("0.0812")
-    x2 = Decimal("2.328")
-    y2 = Decimal("0.0369")
-
-    if x2 == x1:
-        return y1.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
-
-    slope = (y2 - y1) / (x2 - x1)
-    estimated = y1 + slope * (stock_price - x1)
-    if estimated < Decimal("0.0001"):
-        estimated = Decimal("0.0001")
-    return estimated.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
-
-
 def estimate_option_price_model():
-    stock_current = _parse_decimal(ui.ta.stock_current_price_var.get())
-    if stock_current in {None, Decimal("0")}:
-        logging.info("Cannot estimate option price: stock current price is empty or zero")
-        return
+    """估算期权当前价格的回调函数。"""
+    logging.info("estimate_option_price_model() called")
+    _normalize_numeric_fields()
 
-    estimated = _estimate_option_price(stock_current)
+    if ui.ta.direction_var.get() not in {"看涨", "看跌"}:
+        logging.info("Cannot estimate option price: option direction is not selected")
+        return
+    elif ui.ta.direction_var.get() == "看涨":
+        type = "call"
+    else:
+        type = "put"
+    stock_price = _parse_decimal(ui.ta.stock_current_price_var.get())
+    strike_price = _parse_decimal(ui.ta.option_strike_price_var.get())
+    time_to_expiry = _parse_decimal(ui.ta.option_expiry_var.get()) / 365
+    # 取4位小数，且最小值为0.0001
+    time_to_expiry = time_to_expiry.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP) if time_to_expiry is not None else Decimal("0.0000")
+    time_to_expiry = max(time_to_expiry, Decimal("0.0001"))  # Ensure time to expiry is at least 0.0001 years
+    risk_free_rate = _parse_decimal(ui.ta.option_rho_var.get()) / 100
+    volatility = _parse_decimal(ui.ta.option_volatility_var.get()) / 100
+
+    # debug info
+    logging.info("Estimating option price with parameters:")
+    logging.info("Option type: %s", type)
+    logging.info("Stock price: %s", stock_price)
+    logging.info("Strike price: %s", strike_price)
+    logging.info("Time to expiry (years): %s", time_to_expiry)
+    logging.info("Risk-free rate: %s", risk_free_rate)
+    logging.info("Volatility: %s", volatility)
+
+    # estimated = _estimate_option_price(stock_price)
+    estimated = _estimate_option_price_BS(type, stock_price, strike_price, time_to_expiry, risk_free_rate, volatility)
     if estimated is None:
         logging.info("Cannot estimate option price: model returned empty result")
         return
 
+    ui.ta.option_volatility_var.set(_percent_text(volatility * 100, 2))
+    ui.ta.option_rho_var.set(_percent_text(risk_free_rate * 100, 2))
     ui.ta.option_current_price_var.set(f"{estimated:.4f}")
     logging.info("Estimated option current price: %s", ui.ta.option_current_price_var.get())
 
@@ -126,6 +190,9 @@ def _save_current_state():
         "option_strike_price_var",
         "option_buy_price_var",
         "option_current_price_var",
+        "option_expiry_var",
+        "option_volatility_var",
+        "option_rho_var",
         "option_moneyness_var",
         "option_contracts_var",
         "total_funds_var",
@@ -164,6 +231,8 @@ def _compute_position():
     stock_current = _parse_decimal(ui.ta.stock_current_price_var.get())
     option_current = _parse_decimal(ui.ta.option_current_price_var.get())
     option_strike = _parse_decimal(ui.ta.option_strike_price_var.get())
+    option_volatility = _parse_decimal(ui.ta.option_volatility_var.get())
+    option_rho = _parse_decimal(ui.ta.option_rho_var.get())
 
     if stock_buy in {None, Decimal("0")}:
         stock_buy = Decimal("0.001")
@@ -179,6 +248,10 @@ def _compute_position():
         option_current = option_buy
     if option_strike in {None, Decimal("0")}:
         option_strike = option_buy
+    if option_volatility in {None, Decimal("0.00")}:
+        option_volatility = Decimal("1.00")
+    if option_rho in {None, Decimal("0.00")}:
+        option_rho = Decimal("0.00")
 
     usable_funds = total_funds - trade_loss
     if usable_funds < 0:
@@ -243,10 +316,20 @@ def _compute_position():
     ui.ta.option_pnl_var.set(_thousands_text(option_pnl, 2))
     ui.ta.option_gain_var.set(_percent_text(option_gain, 2))
     ui.ta.option_moneyness_var.set(_percent_text(option_moneyness, 2))
+    ui.ta.option_volatility_var.set(_percent_text(option_volatility, 2))
+    ui.ta.option_rho_var.set(_percent_text(option_rho, 2))
     ui.ta.actual_usage_var.set(_thousands_text(actual_usage, 2))
     ui.ta.total_pnl_var.set(_thousands_text(total_pnl, 2))
     ui.ta.return_rate_var.set(_percent_text(return_rate, 2))
 
+def _cdf_temp_debug_function():
+    logging.info("CDF of %s: %s", -3, _norm_cdf(-3))
+    logging.info("CDF of %s: %s", -2, _norm_cdf(-2))
+    logging.info("CDF of %s: %s", -1, _norm_cdf(-1))
+    logging.info("CDF of %s: %s", 0, _norm_cdf(0))
+    logging.info("CDF of %s: %s", 1, _norm_cdf(1))
+    logging.info("CDF of %s: %s", 2, _norm_cdf(2))
+    logging.info("CDF of %s: %s", 3, _norm_cdf(3))
 
 def calculate():
     """计算按钮的回调函数。"""
@@ -255,6 +338,7 @@ def calculate():
     _normalize_numeric_fields()
     _compute_position()
     _save_current_state()
+    # _cdf_temp_debug_function()
 
 
 def export_report():

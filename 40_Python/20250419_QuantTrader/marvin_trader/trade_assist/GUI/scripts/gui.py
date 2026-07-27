@@ -103,6 +103,9 @@ def _wire_live_refresh():
         "option_strike_price_var",
         "option_buy_price_var",
         "option_current_price_var",
+        "option_expiry_var",
+        "option_volatility_var",
+        "option_rho_var",
         "option_moneyness_var",
         "option_contracts_var",
         "total_funds_var",
@@ -180,12 +183,18 @@ def _build_option_insurance_tab(parent, decimal_vcmd):
     ta.option_strike_price_var = tk.StringVar()
     ta.option_buy_price_var = tk.StringVar()
     ta.option_current_price_var = tk.StringVar()
+    ta.option_expiry_var = tk.StringVar()
+    ta.option_volatility_var = tk.StringVar()
+    ta.option_rho_var = tk.StringVar()
     ta.option_gain_var = tk.StringVar()
     ta.option_moneyness_var = tk.StringVar()
     ta.option_contracts_var = tk.StringVar()
     option_strike_entry = ttk.Entry(left, textvariable=ta.option_strike_price_var, validate="key", validatecommand=decimal_vcmd)
     option_buy_entry = ttk.Entry(left, textvariable=ta.option_buy_price_var, validate="key", validatecommand=decimal_vcmd)
     option_current_entry = ttk.Entry(left, textvariable=ta.option_current_price_var, validate="key", validatecommand=decimal_vcmd)
+    option_time_entry = ttk.Entry(left, textvariable=ta.option_expiry_var, validate="key", validatecommand=decimal_vcmd)
+    option_volatility_entry = ttk.Entry(left, textvariable=ta.option_volatility_var, validate="key", validatecommand=decimal_vcmd)
+    option_rho_entry = ttk.Entry(left, textvariable=ta.option_rho_var, validate="key", validatecommand=decimal_vcmd)
     _add_labeled_widget(left, lrow, "行权价", option_strike_entry)
     lrow += 1
     _add_labeled_widget(left, lrow, "虚实度", ttk.Entry(left, textvariable=ta.option_moneyness_var, state="readonly"))
@@ -193,6 +202,12 @@ def _build_option_insurance_tab(parent, decimal_vcmd):
     _add_labeled_widget(left, lrow, "买入价", option_buy_entry)
     lrow += 1
     _add_labeled_widget(left, lrow, "当前价", option_current_entry)
+    lrow += 1
+    _add_labeled_widget(left, lrow, "到期日", option_time_entry)
+    lrow += 1
+    _add_labeled_widget(left, lrow, "波动率", option_volatility_entry)
+    lrow += 1
+    _add_labeled_widget(left, lrow, "RHO", option_rho_entry)
     lrow += 1
     _add_labeled_widget(left, lrow, "涨幅", ttk.Entry(left, textvariable=ta.option_gain_var, state="readonly"))
     lrow += 1
