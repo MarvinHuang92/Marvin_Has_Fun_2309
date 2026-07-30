@@ -104,6 +104,10 @@ def _norm_cdf(x):
     """标准正态分布的累积分布函数 (CDF)"""
     return Decimal("0.5") * (Decimal("1") + Decimal(str(math.erf(float(x) / math.sqrt(2)))))
 
+def _norm_pdf(x):
+    """标准正态分布的概率密度函数 (PDF)"""
+    return Decimal(str(math.exp(-0.5 * float(x) ** 2))) / Decimal(str(math.sqrt(2 * math.pi)))
+
 def _estimate_option_price_BS(type, stock_price, strike_price, time_to_expiry, risk_free_rate, volatility):
     """
     Black-Scholes 期权定价模型。
@@ -123,6 +127,16 @@ def _estimate_option_price_BS(type, stock_price, strike_price, time_to_expiry, r
     # debug info
     logging.info("d1: %s", d1)
     logging.info("d2: %s", d2)
+
+    # 计算希腊字母并记录日志
+    delta, gamma, theta, vega = _calculate_option_greeks(
+        type, stock_price, strike_price, time_to_expiry, risk_free_rate, volatility, d1, d2
+    )
+    logging.info("Delta: %s", delta)
+    logging.info("Gamma: %s", gamma)
+    logging.info("Theta (daily): %s", theta)
+    logging.info("Vega (1%%): %s", vega)
+
     if type == "call":
         call_price = stock_price * _norm_cdf(d1) - strike_price * (-risk_free_rate * time_to_expiry).exp() * _norm_cdf(d2)
         return call_price.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
@@ -132,6 +146,55 @@ def _estimate_option_price_BS(type, stock_price, strike_price, time_to_expiry, r
     else:
         logging.info("Invalid option type: %s", type)
         return None
+
+def _calculate_option_greeks(type, stock_price, strike_price, time_to_expiry, risk_free_rate, volatility, d1, d2):
+    """
+    计算期权的希腊字母值 (Delta, Gamma, Theta, Vega)。
+    d1, d2 由调用方传入以避免重复计算。
+    返回: (delta, gamma, theta, vega) 元组，均为 Decimal 类型。
+    """
+    S = Decimal(stock_price)
+    K = Decimal(strike_price)
+    T = Decimal(time_to_expiry)
+    r = Decimal(risk_free_rate)
+    sigma = Decimal(volatility)
+    d1 = Decimal(d1)
+    d2 = Decimal(d2)
+
+    sqrt_T = Decimal(T).sqrt()
+
+    # N'(d1) — 标准正态 PDF 在 d1 处的值
+    norm_pdf_d1 = _norm_pdf(d1)
+
+    # --- Delta ---
+    if type == "call":
+        delta = _norm_cdf(d1)
+    else:
+        delta = _norm_cdf(d1) - 1
+
+    # --- Gamma (看涨/看跌相同) ---
+    gamma = norm_pdf_d1 / (S * sigma * sqrt_T)
+
+    # --- Vega (每 1% 波动率变动) ---
+    vega = S * norm_pdf_d1 * sqrt_T / 100  # 每变动1个百分点(1%)的vega
+
+    # --- Theta (每日) ---
+    discount = (-r * T).exp()
+    norm_pdf_term = S * norm_pdf_d1 * sigma / (2 * sqrt_T)
+    if type == "call":
+        theta_annual = -norm_pdf_term - r * K * discount * _norm_cdf(d2)
+    else:
+        theta_annual = -norm_pdf_term + r * K * discount * _norm_cdf(-d2)
+    theta = theta_annual / 365  # 转换为每日theta
+
+    # 格式化精度
+    quant = Decimal("0.0001")
+    delta = delta.quantize(quant, rounding=ROUND_HALF_UP)
+    gamma = gamma.quantize(quant, rounding=ROUND_HALF_UP)
+    theta = theta.quantize(quant, rounding=ROUND_HALF_UP)
+    vega = vega.quantize(quant, rounding=ROUND_HALF_UP)
+
+    return delta, gamma, theta, vega
 
 def estimate_option_price_model():
     """估算期权当前价格的回调函数。"""
@@ -330,6 +393,14 @@ def _cdf_temp_debug_function():
     logging.info("CDF of %s: %s", 1, _norm_cdf(1))
     logging.info("CDF of %s: %s", 2, _norm_cdf(2))
     logging.info("CDF of %s: %s", 3, _norm_cdf(3))
+
+    logging.info("PDF of %s: %s", -3, _norm_pdf(-3))
+    logging.info("PDF of %s: %s", -2, _norm_pdf(-2))
+    logging.info("PDF of %s: %s", -1, _norm_pdf(-1))
+    logging.info("PDF of %s: %s", 0, _norm_pdf(0))
+    logging.info("PDF of %s: %s", 1, _norm_pdf(1))
+    logging.info("PDF of %s: %s", 2, _norm_pdf(2))
+    logging.info("PDF of %s: %s", 3, _norm_pdf(3))
 
 def calculate():
     """计算按钮的回调函数。"""
