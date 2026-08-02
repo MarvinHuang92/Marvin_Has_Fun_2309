@@ -9,6 +9,8 @@ set CFG_DIR=%SCRIPT_DIR%cfg
 if not exist "%CFG_DIR%" mkdir "%CFG_DIR%"
 set HISTORY_FILE=%CFG_DIR%\history_input_01.txt
 
+set install_deps=Y
+
 REM Defaults
 @REM 公司电脑
 @REM set DEF_PY=C:/TCC/Tools/python3/3.7.4-29_WIN64_2/python.exe
@@ -74,6 +76,22 @@ if "%VALID%"=="0" (
 	echo [FAIL] Validation failed. Please correct inputs and retry.
 	goto END
 )
+
+REM install python dependencies
+if "%install_deps%"=="Y" (
+	set py_dependencies_file=scripts/requirements.txt
+) else (
+	goto AFTER_INSTALL_DEPS
+)
+if exist "%py_dependencies_file%" (
+	echo.
+	echo Installing Python dependencies from %py_dependencies_file%...
+	call %PY_PATH% -m pip install -r "%py_dependencies_file%"
+) else (
+	echo.
+	echo [Warning] Python dependencies file not found: %py_dependencies_file%
+)
+:AFTER_INSTALL_DEPS
 
 REM Show summary
 echo.
