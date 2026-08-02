@@ -1,0 +1,20 @@
+# -*- coding: utf-8 -*-
+
+GUI_TITLE = "收益截图生成器"
+TAB_NAMES = ["日收益", "月收益", "年收益"]
+BUTTON_EXTRACT_TEXT = "提取数据"
+BUTTON_CALCULATE_TEXT = "计算新数据"
+BUTTON_GEN_IMAGE_TEXT = "生成截图"
+BUTTON_EXPORT_TEXT = "导出报告"
+WINDOW_WIDTH = 640
+WINDOW_HEIGHT = 800
+
+LOCATE_KEYWORD = "周一"
+
+LOCATE_DELTA_DAILY_1 = 100, 200
+
+LOCATE_DELTA_MONTHLY_1 = 100, 200
+
+LOCATE_DELTA_ANNUAL_1 = 100, 200
+
+LAST_SAVED_RELATIVE_PATH = "..\\data\\last_saved.txt"
