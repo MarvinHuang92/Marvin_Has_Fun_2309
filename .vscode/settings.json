@@ -2,5 +2,7 @@
     "files.associations": {
         "iostream": "cpp",
         "ostream": "cpp"
-    }
+    },
+    "cmake.sourceDirectory": "D:/Programming/Marvin_Has_Fun_2309/31_C_Cpp/20250218_Textinfo_Arbitration",
+    "cmake.autoDetectSourceDirectory": false
 }
