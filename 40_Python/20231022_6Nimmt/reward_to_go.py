@@ -11,6 +11,7 @@
   python reward_to_go.py              # rtg 标签
   python reward_to_go.py step         # 单步实际罚分
   python reward_to_go.py rtg 0.9      # 折扣 reward-to-go（γ=0.9）
+  python reward_to_go.py rtg 1.0 输入.csv 输出.csv   # 自定义输入/输出文件
 
 输入必须是 v2 格式的样本表（game_6nimmt.py 现在写出的格式），
 即 55 列之后还有 game_id / round / seat / 本回合罚分 / 回合前分数 这 5 列。
@@ -123,9 +124,14 @@ def main():
         return 1
 
     output = OUTPUT % (label_type if discount == 1.0 else "%s_g%s" % (label_type, discount))
-    rows, cols, skipped = read_rows(INPUT)
+    input_path = INPUT
+    if len(sys.argv) > 3:
+        input_path = sys.argv[3]
+    if len(sys.argv) > 4:
+        output = sys.argv[4]
+    rows, cols, skipped = read_rows(input_path)
     if not rows:
-        print("没有读到 v2 格式的样本，请先跑对局生成 %s" % INPUT)
+        print("没有读到 v2 格式的样本，请先跑对局生成 %s" % input_path)
         return 1
 
     labels = calc_labels(rows, cols, label_type, discount)
@@ -137,7 +143,7 @@ def main():
             row[cols[0]] = "%.6f" % label
             f.write(",".join(row) + "\n")
 
-    print("输入: %s" % INPUT)
+    print("输入: %s" % input_path)
     print("输出: %s" % output)
     print("标签类型: %s%s" % (label_type, "" if label_type != "rtg" else " (discount=%s)" % discount))
     print("样本行数: %d（跳过 %d 行表头/空行/格式不一致）" % (len(rows), skipped))

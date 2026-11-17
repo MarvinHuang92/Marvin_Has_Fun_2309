@@ -64,8 +64,8 @@ def get_data(plot):
         for i in range(input_col_max):
             x_i.append(float(line[i].strip()))
         x.append(x_i)
-        # reward 固定在第 input_col_max 列（后面可能还有 v2 追加的元数据列）
-        y.append([float(line[input_col_max].strip())])
+        # reward 固定在第 reward_col 列（后面可能还有 v2 追加的元数据列）
+        y.append([float(line[reward_col].strip())])
     # print(x)
     # print(y)
         

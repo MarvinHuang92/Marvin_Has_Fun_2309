@@ -3,7 +3,7 @@
 import random, sys, time
 import torch  
 from neural_network_6nimmt import load_model
-from neural_network_run import extra_feature_mode
+from neural_network_run import extra_feature_mode, normalize_state
 
 # 训练样本总表（v2 格式：55 列之后追加 5 列元数据，便于离线重算 reward-to-go）
 SAMPLE_DATA_MASTER = "game_log/02_nn_sample_data_full_v2.csv"
@@ -130,11 +130,36 @@ class Player():
         # 0=出牌时，1=打出最小牌需要收一行时
         # if-else 防止同一回合内 NN_data_1 覆盖了 NN_data_0
         # 额外特征（已出牌集合等）追加在场景位之后
+        if normalize_state:
+            state = self.normalizeState(state, game)
         extra = self.calcExtraFeatures(game)
         if situation == 0:
             self.NN_data_0.state = (state + [situation] + extra)
         elif situation == 1:
             self.NN_data_1.state = (state + [situation] + extra)
+
+    # state 归一化（第三轮优化）：各类量纲不同（牌号 1~N、牛头 0~7、空位 0~5、人数 2），
+    # 直接喂给线性层会让尺度大的几维主导梯度，这里逐段除以各自的上限压到 0~1
+    def normalizeState(self, state, game):
+        deck_size = float(game.deck_size)
+        out = list(state)
+        for i in range(0, 20, 2):       # 手牌数字
+            out[i] = out[i] / deck_size
+        for i in range(1, 20, 2):       # 手牌牛头
+            out[i] = out[i] / 7.0
+        for i in range(20, 24):         # 每行空位数（0~5）
+            out[i] = out[i] / 5.0
+        for i in range(24, 32, 2):      # 行尾牌数字
+            out[i] = out[i] / deck_size
+        for i in range(25, 32, 2):      # 行尾牌牛头
+            out[i] = out[i] / 7.0
+        for i in range(32, 36):         # 每行牛头总数（5 张牌上限 35）
+            out[i] = out[i] / 35.0
+        out[36] = out[36] / 10.0        # 玩家数
+        out[37] = out[37] / 10.0        # 剩余手牌数
+        out[38] = out[38] / 60.0        # 当前罚分
+        # 第 39 位是场景位（0/1），不用动
+        return out
 
     # 额外特征（第二轮优化）：把「已出牌集合」这类全局信息编码进 state
     def calcExtraFeatures(self, game):

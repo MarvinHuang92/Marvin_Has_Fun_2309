@@ -26,7 +26,12 @@ extra_feature_mode = "none"
 EXTRA_FEATURE_DIMS = {"none": 0, "row_segments": 4, "played_onehot": 24}
 extra_features = EXTRA_FEATURE_DIMS[extra_feature_mode]
 
+# state 归一化（第三轮优化）：把「牌号 1~N / 牛头 0~7 / 空位 0~5 / 人数 2」压到 0~1 附近
+normalize_state = False
+
 input_col_max = 54 + extra_features  # x 的维数 = state(40) + 额外特征 + action(14)
+# reward 所在列。默认紧跟在 action 之后；训练只吃 state 的 V(s) 时需要单独指成 54 附近
+reward_col = 54 + extra_features
 
 sample_start_tr = 0   # 训练样本起点，最小为0
 batchsize_tr = 8000    # 训练时每组样本数
