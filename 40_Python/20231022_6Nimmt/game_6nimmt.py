@@ -15,6 +15,9 @@ SEARCH_ROLLOUTS = int(os.environ.get("SEARCH_ROLLOUTS", "12"))
 # "diff" = 自己牛头 − 对手牛头（和胜负一致）；"self" = 只看自己的牛头
 SEARCH_CRITERION = os.environ.get("SEARCH_CRITERION", "diff")
 
+# 第十一轮：混合型玩家 —— 网络先打分，只对前 K 名做 rollout
+HYBRID_TOP_K = int(os.environ.get("HYBRID_TOP_K", "3"))
+
 # 第十轮：把搜索的「逐动作代价」记下来当稠密标签（None = 不记）
 # 每条 = state(54) + 14 个动作的代价（非法动作填 0），供 train_policy.py distill_costs 使用
 SEARCH_COST_LOG = None
@@ -386,7 +389,8 @@ class Player():
         return int(torch.argmax(logits).item())
 
     # 打分式策略（第五轮）：复用 Q 网络（state + 动作 one-hot → 分数），softmax(-分数/温度) 采样
-    def neuronScorePolicyCalc(self, NN_data, action_list):
+    def scorePolicyScores(self, NN_data, action_list):
+        """给给定动作逐个打分（越小越好），不采样"""
         s_i = list(NN_data.state)
         x = torch.Tensor([s_i + [1.0 if i == a else 0.0 for i in range(14)] for a in action_list])
         with torch.no_grad():
@@ -396,6 +400,10 @@ class Player():
                 start, end = self.NN_model.teacher_slice
                 teacher = torch.Tensor([NN_data.state[start + a] for a in action_list])
                 scores = self.NN_model.alpha * teacher + scores
+        return [float(s) for s in scores]
+
+    def neuronScorePolicyCalc(self, NN_data, action_list):
+        scores = torch.Tensor(self.scorePolicyScores(NN_data, action_list))
         logits = -scores / score_temperature
 
         if policy_sample:
@@ -403,9 +411,10 @@ class Player():
             return int(torch.multinomial(probs, 1).item())
         return int(torch.argmax(logits).item())
 
-    # 搜索型玩家（第九轮）：对每个候选动作做 SEARCH_ROLLOUTS 次随机 rollout
+    # 搜索型玩家（第九轮）：对给定候选动作做 SEARCH_ROLLOUTS 次 rollout，返回每个候选的平均代价
     # 注意：对手手牌是隐藏信息，这里从「未见过的牌」里随机采样一副，而不是偷看真实手牌
-    def chooseCardBySearch(self, game, cardDeck):
+    # 公共随机数：同一批对手手牌喂给所有候选动作，动作之间的差值才可比、噪声才小
+    def searchCostsFor(self, game, candidate_indexes):
         rows = [[c.value for c in row if c] for row in game.table]
         my_hand = [c.value for c in self.handCards]
         played = set(game.played_cards)
@@ -413,29 +422,44 @@ class Player():
                   if v not in played and v not in my_hand]
         opp_score = sum(p.bullheads for p in game.playerList if p is not self)
 
-        # 公共随机数：同一批对手手牌喂给所有候选动作，动作之间的差值才可比、噪声才小
         opp_hands = [random.sample(unseen, len(my_hand)) for _ in range(SEARCH_ROLLOUTS)]
         per_rollout = []
         for opp_hand in opp_hands:
             row = []
-            for card in my_hand:
+            for idx in candidate_indexes:
                 me, op = simulateRest(rows, my_hand, opp_hand, self.bullheads, opp_score,
-                                      card, game.deck_size)
+                                      my_hand[idx], game.deck_size)
                 row.append(me if SEARCH_CRITERION == "self" else me - op)
             per_rollout.append(row)
         costs = [sum(column) / float(SEARCH_ROLLOUTS) for column in zip(*per_rollout)]
 
-        self.search_costs = dict(zip(my_hand, costs))
-        recordSearchCosts(self.NN_data_0.state, costs)
-        if SEARCH_SPLIT_LOG is not None and SEARCH_ROLLOUTS >= 4:
+        for idx, cost in zip(candidate_indexes, costs):
+            self.search_costs[my_hand[idx]] = cost
+        if SEARCH_SPLIT_LOG is not None and SEARCH_ROLLOUTS >= 4 and len(candidate_indexes) > 1:
             half = SEARCH_ROLLOUTS // 2
             first = [sum(c) / float(half) for c in zip(*per_rollout[:half])]
             second = [sum(c) / float(len(per_rollout) - half) for c in zip(*per_rollout[half:])]
-            SEARCH_SPLIT_LOG.append((list(my_hand),
+            SEARCH_SPLIT_LOG.append(([my_hand[i] for i in candidate_indexes],
                                      first.index(min(first)),
                                      second.index(min(second)),
-                                     min(sorted(costs)[1:]) - min(costs) if len(costs) > 1 else 0.0))
+                                     min(sorted(costs)[1:]) - min(costs)))
+        return costs
+
+    def chooseCardBySearch(self, game, cardDeck):
+        self.search_costs = {}
+        costs = self.searchCostsFor(game, list(range(len(self.handCards))))
+        recordSearchCosts(self.NN_data_0.state, costs)
         return costs.index(min(costs))
+
+    # 混合型玩家（第十一轮）：网络给所有手牌打分，只把前 K 名交给 rollout
+    # 网络负责"别浪费预算在明显差的牌上"，搜索负责"在前几名里挑真的更好的那张"
+    def chooseCardByHybrid(self, game, cardDeck):
+        self.search_costs = {}
+        legal = list(range(len(self.handCards)))
+        scores = self.scorePolicyScores(self.NN_data_0, legal)
+        candidates = [a for _, a in sorted(zip(scores, legal))][:max(1, HYBRID_TOP_K)]
+        costs = self.searchCostsFor(game, candidates)
+        return candidates[costs.index(min(costs))]
 
     def playCard(self, game, cardDeck):
         # 收集 State 信息
@@ -513,7 +537,10 @@ class Player():
             index = self.chooseCardBySearch(game, cardDeck)
             # 第十轮：把启发式 reward 换成搜索算出的逐动作代价（样本里的标签因此变准）
             for item in handcards_dicts:
-                item["reward"] = self.search_costs[item["card"].value]
+                item["reward"] = self.search_costs.get(item["card"].value, item["reward"])
+        # 混合型玩家（第十一轮）：网络剪枝 + 前 K 名 rollout
+        elif self.intellegence == "hybrid":
+            index = self.chooseCardByHybrid(game, cardDeck)
         
         return self.handCards[index], index, handcards_dicts 
         
@@ -561,6 +588,9 @@ class Player():
         elif self.intellegence == "search":
             ret = bullheads_list.index(min(bullheads_list)) + 1
             recordSearchCosts(self.NN_data_1.state, bullheads_list, offset=10)
+        # 混合型玩家（第十一轮）：吃行和搜索型保持一致，好把差别只归到"出牌选择"上
+        elif self.intellegence == "hybrid":
+            ret = bullheads_list.index(min(bullheads_list)) + 1
         
         # 更新 Action 样本集
         action_list = [0]*14
@@ -920,7 +950,8 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         elif player_type == "policy":
             playerList[i].NN_model = load_policy(model_path)
         # 打分式策略玩家（第五轮）：架构与 Q 网络相同，用同一个加载函数
-        elif player_type == "scorepolicy":
+        # 混合型玩家（第十一轮）也用打分网络做剪枝
+        elif player_type in ("scorepolicy", "hybrid"):
             playerList[i].NN_model = load_model(model_path)
 
     # 创建牌堆
