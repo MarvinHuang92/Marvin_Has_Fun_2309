@@ -17,6 +17,13 @@ SEARCH_CRITERION = os.environ.get("SEARCH_CRITERION", "diff")
 
 # 第十一轮：混合型玩家 —— 网络先打分，只对前 K 名做 rollout
 HYBRID_TOP_K = int(os.environ.get("HYBRID_TOP_K", "3"))
+# 第十二轮：吃行也做搜索（4 个候选行各 rollout 一遍）
+HYBRID_ROW_SEARCH = os.environ.get("HYBRID_ROW_SEARCH", "1") not in ("0", "false")
+# 第十二轮：自适应 rollout —— 分小批跑，一旦领先幅度超过噪声就提前停
+SEARCH_EARLY_STOP = os.environ.get("SEARCH_EARLY_STOP", "1") not in ("0", "false")
+# 第十二轮：把网络的先验和 rollout 的代价做收缩混合（0 = 只用 rollout）
+#   最终分数 = z(代价) + HYBRID_BLEND * z(网络分数)，两边都按行内标准差归一化
+HYBRID_BLEND = float(os.environ.get("HYBRID_BLEND", "0"))
 
 # 第十轮：把搜索的「逐动作代价」记下来当稠密标签（None = 不记）
 # 每条 = state(54) + 14 个动作的代价（非法动作填 0），供 train_policy.py distill_costs 使用
@@ -32,6 +39,32 @@ def recordSearchCosts(state, costs, offset=0):
         for i, cost in enumerate(costs):
             row[len(state) + offset + i] = cost
         SEARCH_COST_LOG.append(row)
+
+
+def normalizeByStd(values):
+    """行内按标准差归一化（减去均值、除以标准差），让不同来源的分数可比"""
+    n = len(values)
+    mean = sum(values) / float(n)
+    var = sum((v - mean) ** 2 for v in values) / float(n)
+    sd = var ** 0.5
+    return [(v - mean) / sd if sd > 1e-9 else 0.0 for v in values]
+
+
+def pairedConfident(per_rollout, threshold=2.0):
+    """成对比较的"已经分出胜负"判断：领先幅度 > threshold 倍标准误就停
+
+    用成对差值（同一批对手手牌下两个动作的代价差）算标准误，比两均值各自的标准误更灵敏。
+    """
+    n = len(per_rollout)
+    if n < 4:
+        return False
+    means = [sum(column) / float(n) for column in zip(*per_rollout)]
+    order = sorted(range(len(means)), key=lambda i: means[i])
+    best, second = order[0], order[1]
+    diffs = [row[second] - row[best] for row in per_rollout]
+    mean_diff = sum(diffs) / float(n)
+    sd = (sum((d - mean_diff) ** 2 for d in diffs) / float(n - 1)) ** 0.5
+    return mean_diff > threshold * sd / (n ** 0.5)
 
 
 def cardBullheads(value):
@@ -72,9 +105,41 @@ def teacherPick(rows, hand, deck_size):
     return hand[best_idx]
 
 
-def simulateRest(rows, my_hand, opp_hand, my_score, opp_score, first_card, deck_size):
+def placeCard(rows, value, pick_row, deck_size):
+    """按规则把一张牌放进行里（就地修改 rows），返回这一手吃到的牛头
+
+    pick_row(rows) -> 行下标：只在"这张牌比所有行尾都小、必须吃一行"时调用。
+    规则：差值最小且为正的那一行；该行满了就吃下整行；否则接到行尾。
+    """
+    ends = [row[-1] for row in rows]
+    diffs = [value - end for end in ends]
+    if max(diffs) < 0:                             # 比所有行尾都小，必须吃一行
+        target = pick_row(rows)
+        taken = sum(cardBullheads(c) for c in rows[target])
+        rows[target] = [value]
+        return taken
+    best_diff, target = None, 0
+    for i, diff in enumerate(diffs):
+        if diff > 0 and (best_diff is None or diff < best_diff):
+            best_diff, target = diff, i
+    if len(rows[target]) >= 5:                     # 该行已满，吃下整行
+        taken = sum(cardBullheads(c) for c in rows[target])
+        rows[target] = [value]
+        return taken
+    rows[target].append(value)
+    return 0
+
+
+def greedyRow(rows):
+    """自己的默认吃行策略：牛头最少的那一行"""
+    return min(range(len(rows)), key=lambda i: sum(cardBullheads(c) for c in rows[i]))
+
+
+def simulateRest(rows, my_hand, opp_hand, my_score, opp_score, first_card, deck_size,
+                 first_row_choice=None):
     """从当前局面把剩下的回合打完：我先出 first_card，之后用老师规则；对手全程随机
 
+    first_row_choice：第一回合若我必须吃行，强制吃掉哪一行（吃行搜索用）
     返回 (我的最终牛头, 对手的最终牛头)
     """
     rows = [list(row) for row in rows]
@@ -84,36 +149,50 @@ def simulateRest(rows, my_hand, opp_hand, my_score, opp_score, first_card, deck_
         mine = first_card if k == 0 else teacherPick(rows, my, deck_size)
         theirs = opp[random.randrange(len(opp))]
         for value, is_me in sorted([(mine, True), (theirs, False)]):
-            ends = [row[-1] for row in rows]
-            diffs = [value - end for end in ends]
-            if max(diffs) < 0:                     # 比所有行尾都小，必须吃一行
+            def pick(current, is_me=is_me, k=k):
                 if is_me:
-                    target = min(range(len(rows)), key=lambda i: sum(cardBullheads(c) for c in rows[i]))
-                else:
-                    target = random.randrange(len(rows))
-                taken = sum(cardBullheads(c) for c in rows[target])
-                if is_me:
-                    me_score += taken
-                else:
-                    op_score += taken
-                rows[target] = [value]
+                    if k == 0 and first_row_choice is not None:
+                        return first_row_choice
+                    return greedyRow(current)
+                return random.randrange(len(current))
+            taken = placeCard(rows, value, pick, deck_size)
+            if is_me:
+                me_score += taken
             else:
-                best_diff, target = None, 0
-                for i, diff in enumerate(diffs):
-                    if diff > 0 and (best_diff is None or diff < best_diff):
-                        best_diff, target = diff, i
-                if len(rows[target]) >= 5:         # 该行已满，吃下整行
-                    taken = sum(cardBullheads(c) for c in rows[target])
-                    if is_me:
-                        me_score += taken
-                    else:
-                        op_score += taken
-                    rows[target] = [value]
-                else:
-                    rows[target].append(value)
+                op_score += taken
         my.remove(mine)
         opp.remove(theirs)
     return me_score, op_score
+
+
+def simulateAfterRow(rows, my_hand, opp_hand, my_score, opp_score, played_card, target_row, deck_size):
+    """我已经打出一张"全场最小"的牌、现在要挑一行吃掉时的模拟
+
+    顺序按规则：我先吃掉 target_row（我的牌变成该行的第一张），
+    然后对手这一回合的牌才落下，之后打剩下的回合（我用老师规则、对手随机）。
+    """
+    rows = [list(row) for row in rows]
+    me_score = my_score + sum(cardBullheads(c) for c in rows[target_row])
+    rows[target_row] = [played_card]
+
+    done = placeCard(rows, opp_hand[0], lambda r: random.randrange(len(r)), deck_size)
+    opp_score = opp_score + done
+
+    my, opp = list(my_hand), list(opp_hand[1:])
+    for k in range(len(my)):
+        mine = teacherPick(rows, my, deck_size)
+        theirs = opp[random.randrange(len(opp))]
+        for value, is_me in sorted([(mine, True), (theirs, False)]):
+            def pick(current, is_me=is_me):
+                return greedyRow(current) if is_me else random.randrange(len(current))
+            taken = placeCard(rows, value, pick, deck_size)
+            if is_me:
+                me_score += taken
+            else:
+                opp_score += taken
+        my.remove(mine)
+        opp.remove(theirs)
+    return me_score, opp_score
 
 # 打分式策略的采样温度（越小越接近贪心）
 score_temperature = SCORE_TEMPERATURE
@@ -424,6 +503,7 @@ class Player():
 
         opp_hands = [random.sample(unseen, len(my_hand)) for _ in range(SEARCH_ROLLOUTS)]
         per_rollout = []
+        batch = max(2, SEARCH_ROLLOUTS // 4)
         for opp_hand in opp_hands:
             row = []
             for idx in candidate_indexes:
@@ -431,14 +511,19 @@ class Player():
                                       my_hand[idx], game.deck_size)
                 row.append(me if SEARCH_CRITERION == "self" else me - op)
             per_rollout.append(row)
-        costs = [sum(column) / float(SEARCH_ROLLOUTS) for column in zip(*per_rollout)]
+            # 自适应预算：小批跑完就能分出胜负就不再浪费 rollout
+            if (SEARCH_EARLY_STOP and len(candidate_indexes) > 1 and len(per_rollout) >= 2 * batch
+                    and len(per_rollout) % batch == 0 and pairedConfident(per_rollout)):
+                break
+        used = len(per_rollout)
+        costs = [sum(column) / float(used) for column in zip(*per_rollout)]
 
         for idx, cost in zip(candidate_indexes, costs):
             self.search_costs[my_hand[idx]] = cost
-        if SEARCH_SPLIT_LOG is not None and SEARCH_ROLLOUTS >= 4 and len(candidate_indexes) > 1:
-            half = SEARCH_ROLLOUTS // 2
+        if SEARCH_SPLIT_LOG is not None and used >= 4 and len(candidate_indexes) > 1:
+            half = used // 2
             first = [sum(c) / float(half) for c in zip(*per_rollout[:half])]
-            second = [sum(c) / float(len(per_rollout) - half) for c in zip(*per_rollout[half:])]
+            second = [sum(c) / float(used - half) for c in zip(*per_rollout[half:])]
             SEARCH_SPLIT_LOG.append(([my_hand[i] for i in candidate_indexes],
                                      first.index(min(first)),
                                      second.index(min(second)),
@@ -457,9 +542,41 @@ class Player():
         self.search_costs = {}
         legal = list(range(len(self.handCards)))
         scores = self.scorePolicyScores(self.NN_data_0, legal)
-        candidates = [a for _, a in sorted(zip(scores, legal))][:max(1, HYBRID_TOP_K)]
+        ranked = [a for _, a in sorted(zip(scores, legal))]
+        candidates = ranked[:max(1, HYBRID_TOP_K)]
         costs = self.searchCostsFor(game, candidates)
+        if HYBRID_BLEND > 0 and len(candidates) > 1:
+            # 网络先验 + rollout 代价的收缩混合：rollout 只有几十次采样，噪声不小，
+            # 掺一点网络的相对排序能把"其实差不多"的动作拉回来
+            network = dict(zip(legal, scores))
+            z_cost = normalizeByStd(costs)
+            z_net = normalizeByStd([network[a] for a in candidates])
+            combined = [c + HYBRID_BLEND * n for c, n in zip(z_cost, z_net)]
+            return candidates[combined.index(min(combined))]
         return candidates[costs.index(min(costs))]
+
+    # 第十二轮：吃行也搜索 —— 4 个候选行各做一遍 rollout
+    # 吃掉一行会把那一行清空并让我的牌成为新的行首，影响后面所有回合，所以值得算
+    def chooseRowBySearch(self, game, card):
+        rows = [[c.value for c in row if c] for row in game.table]
+        my_hand = [c.value for c in self.handCards]
+        played = set(game.played_cards)
+        unseen = [v for v in range(1, game.deck_size + 1)
+                  if v not in played and v not in my_hand]
+        opp_score = sum(p.bullheads for p in game.playerList if p is not self)
+
+        # 吃行时我已打出本回合的牌（手牌 n-1 张），对手手上还有 n 张未知的牌
+        # （n-1 张手牌 + 本回合已打出但还没结算的那张），所以采样 n 张
+        opp_hands = [random.sample(unseen, len(my_hand) + 1) for _ in range(SEARCH_ROLLOUTS)]
+        costs = []
+        for target in range(len(rows)):
+            total = 0.0
+            for opp_hand in opp_hands:
+                me, op = simulateAfterRow(rows, my_hand, opp_hand, self.bullheads, opp_score,
+                                          card.value, target, game.deck_size)
+                total += me if SEARCH_CRITERION == "self" else me - op
+            costs.append(total / float(SEARCH_ROLLOUTS))
+        return costs.index(min(costs))
 
     def playCard(self, game, cardDeck):
         # 收集 State 信息
@@ -589,8 +706,12 @@ class Player():
             ret = bullheads_list.index(min(bullheads_list)) + 1
             recordSearchCosts(self.NN_data_1.state, bullheads_list, offset=10)
         # 混合型玩家（第十一轮）：吃行和搜索型保持一致，好把差别只归到"出牌选择"上
+        # 第十二轮：改成也搜索 —— 4 个候选行各 rollout 一遍（HYBRID_ROW_SEARCH=0 可关掉）
         elif self.intellegence == "hybrid":
-            ret = bullheads_list.index(min(bullheads_list)) + 1
+            if HYBRID_ROW_SEARCH:
+                ret = self.chooseRowBySearch(game, card) + 1
+            else:
+                ret = bullheads_list.index(min(bullheads_list)) + 1
         
         # 更新 Action 样本集
         action_list = [0]*14
