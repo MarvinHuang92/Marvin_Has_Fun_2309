@@ -92,3 +92,28 @@ def build_action_inputs(states, actions):
 def scores_to_logits(scores, temperature=SCORE_TEMPERATURE):
     """Q 分数越小越好，所以取负；温度控制采样随机性"""
     return -scores / temperature
+
+
+class ResidualPolicy(nn.Module):
+    """score(s, a) = alpha * t(s, a) + net(s, a)（第八轮）
+
+    t 取自 state 里的 teacher_scores 块（第 40~53 位，每个动作一个老师分数）。
+    输出层零初始化 ⇒ 初始 correction = 0 ⇒ 策略严格等于老师（起点 74.65%），
+    网络只需要学「老师哪里算错了」，比「把 t 当普通特征重新学一遍」更有针对性。
+    """
+    residual = True                     # 玩家侧据此决定要不要叠加 alpha * t
+    teacher_slice = (40, 54)
+
+    def __init__(self, n_in, n_hidden=120):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_in, n_hidden),
+            nn.ReLU(),
+            nn.Linear(n_hidden, 1),
+        )
+        self.alpha = nn.Parameter(torch.tensor(1.0))
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
+
+    def forward(self, x):
+        return self.net(x).view(-1)

@@ -29,7 +29,7 @@ from torch import nn
 import game_6nimmt
 import reward_to_go as rtg
 from neural_network_6nimmt import resolve_model_path
-from policy_6nimmt import PolicyNetwork, legal_mask, save_policy, load_policy, build_action_inputs
+from policy_6nimmt import PolicyNetwork, legal_mask, save_policy, load_policy, build_action_inputs, ResidualPolicy
 
 STATE_DIM = 40
 ACTION_DIM = 14
@@ -309,6 +309,120 @@ def imitate_score(data_csv, out_path, epochs=300, temperature=1.0, hidden=30, ba
     return 0
 
 
+def train_residual(data_csv, model_path, epochs=6, lr=1e-4, temperature=1.0, kl_beta=0.0, batch=2048):
+    """残差策略的 RL：score = alpha * 老师分数 + 网络修正（第八轮）
+
+    起点严格等于老师（输出层零初始化），所以这里主要是看「能不能学到有用的修正」。
+    """
+    import copy
+
+    rows, cols, _ = rtg.read_rows(data_csv)
+    states, masks, actions, advantages = build_states_and_masks(rows, cols)
+    if not states:
+        print("没有读到策略玩家的样本")
+        return 1
+
+    state_dim = cols[0] - ACTION_DIM
+    x = torch.Tensor(states)
+    mask = mask_tensor(masks)
+    taken = torch.LongTensor(actions)
+    adv = torch.Tensor(advantages)
+    adv = adv - adv.mean()
+    all_actions = torch.arange(ACTION_DIM).unsqueeze(0)
+
+    model = torch.load(resolve_model_path(model_path), weights_only=False)
+    start, end = model.teacher_slice
+    reference = copy.deepcopy(model)
+    reference.eval()
+    for p in reference.parameters():
+        p.requires_grad_(False)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr)
+    n = x.shape[0]
+    for epoch in range(epochs):
+        order = torch.randperm(n)
+        total_loss, total_kl, total_alpha = 0.0, 0.0, 0.0
+        for begin in range(0, n, batch):
+            idx = order[begin:begin + batch]
+            acts = all_actions.repeat(len(idx), 1)
+            xa = build_action_inputs(x[idx], acts).view(-1, state_dim + ACTION_DIM)
+            teacher = x[idx][:, start:end]                       # (n,14) 每个动作的老师分数
+
+            scores = model.alpha * teacher + model(xa).view(-1, ACTION_DIM)
+            logits = -scores / temperature + (mask[idx] - 1.0) * 1e9
+            with torch.no_grad():
+                ref_scores = reference.alpha * teacher + reference(xa).view(-1, ACTION_DIM)
+                logits_ref = -ref_scores / temperature + (mask[idx] - 1.0) * 1e9
+
+            logp = torch.log_softmax(logits, dim=1)
+            logp_ref = torch.log_softmax(logits_ref, dim=1)
+            logp_taken = logp.gather(1, taken[idx].unsqueeze(1)).squeeze(1)
+            kl = (torch.exp(logp) * (logp - logp_ref)).sum(dim=1).mean()
+            loss = (logp_taken * adv[idx]).mean() + kl_beta * kl
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item() * len(idx)
+            total_kl += kl.item() * len(idx)
+            total_alpha += model.alpha.item() * len(idx)
+        print("epoch %2d  loss %+.5f  KL %.5f  alpha %.4f"
+              % (epoch, total_loss / n, total_kl / n, total_alpha / n))
+
+    save_policy(model, model_path)
+    return 0
+
+
+def train_pairwise(data_csv, model_path, epochs=6, lr=1e-4, margin=0.05, batch=512):
+    """成对比较目标（第八轮）：只要求「老师认为更好的动作得分更低」，不拟合分数绝对值
+
+    对每个局面取出老师的 14 个分数，构成 (a 优于 b) 的动作对，
+    用 margin ranking loss：max(0, margin + score_a - score_b)。
+    相比交叉熵，它只关心排序、不关心分数尺度。
+    """
+    rows, cols, _ = rtg.read_rows(data_csv)
+    states, masks, actions, _ = build_states_and_masks(rows, cols)
+    if not states:
+        print("没有读到策略玩家的样本")
+        return 1
+
+    state_dim = cols[0] - ACTION_DIM
+    x = torch.Tensor(states)
+    mask = mask_tensor(masks)
+    all_actions = torch.arange(ACTION_DIM).unsqueeze(0)
+    start, end = 40, 54                       # teacher_scores 块的位置
+
+    model = torch.load(resolve_model_path(model_path), weights_only=False)
+    optimizer = torch.optim.Adam(model.parameters(), lr)
+    n = x.shape[0]
+    for epoch in range(epochs):
+        order = torch.randperm(n)
+        total = 0.0
+        for begin in range(0, n, batch):
+            idx = order[begin:begin + batch]
+            acts = all_actions.repeat(len(idx), 1)
+            xa = build_action_inputs(x[idx], acts).view(-1, state_dim + ACTION_DIM)
+            scores = model(xa).view(-1, ACTION_DIM)            # 分数越小越好
+            teacher = x[idx][:, start:end]
+
+            diff_t = teacher.unsqueeze(2) - teacher.unsqueeze(1)   # t_a - t_b < 0 → a 更好
+            diff_s = scores.unsqueeze(2) - scores.unsqueeze(1)
+            legal = mask[idx]
+            pair = (diff_t < -1e-6) & (legal.unsqueeze(2) > 0) & (legal.unsqueeze(1) > 0)
+            if pair.sum() == 0:
+                continue
+            hinge = torch.relu(margin + diff_s)[pair]
+            loss = hinge.mean()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            total += loss.item() * len(idx)
+        print("epoch %2d  ranking loss %.5f" % (epoch, total / n))
+
+    save_policy(model, model_path)
+    return 0
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -345,6 +459,23 @@ def main():
         entropy = float(sys.argv[7]) if len(sys.argv) > 7 else 0.0
         kl_beta = float(sys.argv[8]) if len(sys.argv) > 8 else 0.0
         return train_score(sys.argv[2], sys.argv[3], epochs, lr, temperature, entropy, kl_beta)
+    if cmd == "residual_init":
+        hidden = int(sys.argv[3]) if len(sys.argv) > 3 else 120
+        model = ResidualPolicy(54 + ACTION_DIM, hidden)
+        save_policy(model, sys.argv[2])
+        print("已创建残差模型（输出层零初始化，策略=老师），隐藏单元 %d" % hidden)
+        return 0
+    if cmd == "train_residual":
+        epochs = int(sys.argv[4]) if len(sys.argv) > 4 else 6
+        lr = float(sys.argv[5]) if len(sys.argv) > 5 else 1e-4
+        temperature = float(sys.argv[6]) if len(sys.argv) > 6 else 1.0
+        kl_beta = float(sys.argv[7]) if len(sys.argv) > 7 else 0.0
+        return train_residual(sys.argv[2], sys.argv[3], epochs, lr, temperature, kl_beta)
+    if cmd == "train_pairwise":
+        epochs = int(sys.argv[4]) if len(sys.argv) > 4 else 6
+        lr = float(sys.argv[5]) if len(sys.argv) > 5 else 1e-4
+        margin = float(sys.argv[6]) if len(sys.argv) > 6 else 0.05
+        return train_pairwise(sys.argv[2], sys.argv[3], epochs, lr, margin)
 
     print("未知命令: %s" % cmd)
     return 1

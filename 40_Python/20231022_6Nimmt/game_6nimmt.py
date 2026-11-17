@@ -287,6 +287,11 @@ class Player():
         x = torch.Tensor([s_i + [1.0 if i == a else 0.0 for i in range(14)] for a in action_list])
         with torch.no_grad():
             scores = self.NN_model(x).view(-1)
+            # 残差结构（第八轮）：最终分数 = alpha * 老师分数 + 网络修正
+            if getattr(self.NN_model, "residual", False):
+                start, end = self.NN_model.teacher_slice
+                teacher = torch.Tensor([NN_data.state[start + a] for a in action_list])
+                scores = self.NN_model.alpha * teacher + scores
         logits = -scores / score_temperature
 
         if policy_sample:
