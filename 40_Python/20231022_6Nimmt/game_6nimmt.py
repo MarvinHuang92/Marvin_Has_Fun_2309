@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
 
-import random, sys
+import random, sys, time
 import torch  
 from neural_network_6nimmt import load_model
+
+# 训练样本总表（v2 格式：55 列之后追加 5 列元数据，便于离线重算 reward-to-go）
+SAMPLE_DATA_MASTER = "game_log/02_nn_sample_data_full_v2.csv"
+
+# 进程启动时间戳 + 对局计数器，用于生成不重复的 game_id
+RUN_TIME_TAG = time.strftime("%Y%m%d%H%M%S", time.localtime())
+RUN_GAME_COUNTER = 0
 
 # 用于神经网络训练的样本集，每个回合，每个玩家出牌时，更新一组
 # State / Action 在玩家的 playCard() 方法中更新
@@ -28,14 +35,25 @@ class NNSampleData():
         # self.action = 0
         self.action = [0]*14
         ### Reward ###
-        # 54位：执行动作后的分数
+        # 54位：执行动作后的分数（启发式估计值，由 advAiCalc*Reward 算出）
         self.reward = 0
+        ### 元数据（v2 新增，55-59位）###
+        # 55位：对局编号；56位：第几回合(1-10)；57位：玩家序号(1-based)
+        # 58位：本回合真实吃到的牛头；59位：本回合开始前的累计牛头
+        # 有了这几列，就能离线把 reward 重算成 reward-to-go / 单步实际罚分，不用重跑对局
+        self.game_id = 0
+        self.round = 0
+        self.seat = 0
+        self.penalty_this_round = 0
+        self.score_before_round = 0
         # 总表
         self.final_list = []
     
     def calcFinalList(self):
         # self.final_list = self.state + [self.action, self.reward]
-        self.final_list = self.state + self.action + [self.reward]
+        self.final_list = (self.state + self.action + [self.reward]
+                           + [self.game_id, self.round, self.seat,
+                              self.penalty_this_round, self.score_before_round])
 
 
 # 定义玩家类
@@ -528,6 +546,11 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
     if len(player_types) != PLAYERS:
         raise ValueError("player_types 数量(%d)与玩家数(%d)不一致" % (len(player_types), PLAYERS))
 
+    global RUN_GAME_COUNTER
+    RUN_GAME_COUNTER += 1
+    # 对局编号：跨进程也基本不重复，用于离线按局归集样本
+    game_id = "%s-%d" % (RUN_TIME_TAG, RUN_GAME_COUNTER)
+
     # 强制随机数种子
     # random_seed = 1
 
@@ -591,6 +614,9 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         # 显示当前桌面牌型，并存入样本集：前40位
         game.table_data = game.showTable()
 
+        # 本回合开始前各玩家的累计牛头，用于计算真实罚分和 reward-to-go
+        score_before = {p.name: p.bullheads for p in playerList}
+
         # 玩家出牌，并将桌面牌型和手牌加入样本集
         for p in playerList:
             p.played_smallest = False  # 重置玩家状态
@@ -602,21 +628,24 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         
         for p in playerList:
             p.showPenaltyCards()
-            # 生成当前回合，当前玩家的训练样本集
-            # if not p.NN_data_0.action == -1:  # 神经网络玩家的动作，不加入样本
-            if not p.NN_data_0.action[0] == -1:  # 神经网络玩家的动作，不加入样本
-                p.NN_data_0.calcFinalList()
+            # 本回合真实罚分（不是 advAi 的估计值）
+            penalty = p.bullheads - score_before[p.name]
+            # NN_data_0 = 出牌决策，NN_data_1 = 打出最小牌后选行的决策
+            # 两者都发生在结算之前，所以共享同一个 reward-to-go
+            for data, is_used in ((p.NN_data_0, p.NN_data_0.action[0] != -1),
+                                  (p.NN_data_1, p.NN_data_1.action[0] != -1 and p.played_smallest)):
+                if not is_used:  # 神经网络玩家的动作，不加入样本
+                    continue
+                data.game_id = game_id
+                data.round = i + 1
+                data.seat = int(p.name.replace("P", ""))
+                data.penalty_this_round = penalty
+                data.score_before_round = score_before[p.name]
+                data.calcFinalList()
                 # 将当前回合的样本加入总样本集，最后统一打印
-                sample_data = str(p.NN_data_0.final_list).strip("[").strip("]")
+                # （去掉 game_id 字符串自带的引号，让 CSV 干净些）
+                sample_data = str(data.final_list).strip("[").strip("]").replace("'", "")
                 NN_Sample_Data.append(sample_data + "\n")
-                # print(sample_data)
-
-            # if (not p.NN_data_1.action == -1) and p.played_smallest:  # 如果本回合打出了最小牌
-            if (not p.NN_data_1.action[0] == -1) and p.played_smallest:  # 如果本回合打出了最小牌
-                p.NN_data_1.calcFinalList()
-                sample_data = str(p.NN_data_1.final_list).strip("[").strip("]")
-                NN_Sample_Data.append(sample_data + "\n")
-                # print(sample_data)
 
         # 游戏剩余回合数-1
         game.leftRoundDecrement()
@@ -667,13 +696,14 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
     # csv_headers = "Table11,,,,,,,,,,Table21,,,,,,,,,,Table31,,,,,,,,,,Table41,,,,,,,,,,\
     #     HandCard0,,,,,,,,,,,,,,,,,,HandCard9,,leftHandCard,CurrBullheads,Situation,Action,Reward"
     csv_headers = "HandCard0,,,,,,,,,,,,,,,,,,HandCard9,,BlanksRow1,,,BlanksRow4,LastCardRow1,,,,,,LastCardRow4,,\
-        BullheadsRow1,,,BullheadsRow4,Players,leftHandCard,CurrBullheads,Situation,Action0,,,,,,,,,Action9,ChooseRow1,,,ChooseRow4,Reward"
+        BullheadsRow1,,,BullheadsRow4,Players,leftHandCard,CurrBullheads,Situation,Action0,,,,,,,,,Action9,ChooseRow1,,,ChooseRow4,Reward,\
+        GameId,Round,Seat,PenaltyThisRound,ScoreBeforeRound"
     with open(nn_sample_data_filename, "w") as f:
         f.write(csv_headers + "\n")
         f.writelines(NN_Sample_Data)
         f.close()
     # 历史总表
-    with open("game_log/02_nn_sample_data_full.csv", "a") as f:
+    with open(SAMPLE_DATA_MASTER, "a") as f:
         f.writelines(NN_Sample_Data)
         f.close()
 

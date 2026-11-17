@@ -63,7 +63,8 @@ def get_data(plot):
         for i in range(input_col_max):
             x_i.append(int(line[i].strip()))
         x.append(x_i)
-        y.append([float(line[-1].strip())])
+        # reward 固定在第 input_col_max 列（后面可能还有 v2 追加的元数据列）
+        y.append([float(line[input_col_max].strip())])
     # print(x)
     # print(y)
         
