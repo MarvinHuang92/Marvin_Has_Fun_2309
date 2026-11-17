@@ -166,7 +166,8 @@ def softmax_epoch(x, y, network, criterion, optimizer, n_epochs, n_print_loss):
         optimizer.zero_grad()  # 将梯度清零，用于下一次迭代
 
         # 计算准确率 accuracy
-        accuracy = (y_pred.argmax(1) == y).type(float32).sum().item() / len(y)
+        # 注意 y 的形状：分类任务是一维 (N,)，拟合任务是二维 (N,1)；不展平会广播成 N×N 的巨矩阵
+        accuracy = (y_pred.argmax(1) == y.view(-1)).type(float32).sum().item() / len(y)
 
         # 模型的每一次迭代，都由前向传播，和反向传播组成
         if epoch % n_print_loss == 0:
