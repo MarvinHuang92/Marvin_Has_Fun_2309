@@ -128,7 +128,7 @@ class Player():
         # 分别在 playCard()，chooseRowWhenSmallest() 方法中执行
     
     # 收集当前场上信息，用于更新 State 样本
-    def getGameStateToNNData(self, game, situation=0):
+    def getGameStateToNNData(self, game, situation=0, cardDeck=None):
         # 桌面牌型
         # state = game.table_data[:]  # 注意list的赋值要加上[:]，否则将成为对原list的引用，无法修改
         state = []  # 暂不添加桌面牌型在前40位
@@ -160,7 +160,7 @@ class Player():
         # 额外特征（已出牌集合等）追加在场景位之后
         if normalize_state:
             state = self.normalizeState(state, game)
-        extra = self.calcExtraFeatures(game)
+        extra = self.calcExtraFeatures(game, situation, cardDeck)
         if situation == 0:
             self.NN_data_0.state = (state + [situation] + extra)
         elif situation == 1:
@@ -190,7 +190,7 @@ class Player():
         return out
 
     # 额外特征（第二轮优化）：把「已出牌集合」这类全局信息编码进 state
-    def calcExtraFeatures(self, game):
+    def calcExtraFeatures(self, game, situation=0, cardDeck=None):
         if extra_feature_mode == "none":
             return []
         elif extra_feature_mode == "row_segments":
@@ -199,8 +199,42 @@ class Player():
             return self.calcPlayedOneHot(game)
         elif extra_feature_mode == "hand_bullheads":
             return self.calcHandBullheadFeatures(game)
+        elif extra_feature_mode == "teacher_scores":
+            return self.calcTeacherFeature(game, situation, cardDeck, summary=False)
+        elif extra_feature_mode == "teacher_summary":
+            return self.calcTeacherFeature(game, situation, cardDeck, summary=True)
         else:
             raise ValueError("未知的 extra_feature_mode: %s" % extra_feature_mode)
+
+    # 第七轮方案：把 advanced_ai 的估值公式当**特征**（不是当标签）
+    #   逐动作分数（14 维）：出牌时填 0~9（每张手牌一个分），收行时填 10~13（每行牛头）
+    #   聚合量（5 维）：最小值 / 均值 / 最好与次好之差 / 分数 <= 0 的个数 / 最大值
+    def calcTeacherFeature(self, game, situation, cardDeck, summary):
+        scores = [0.0] * 14
+        if situation == 0:
+            values = [float(item["reward"])
+                      for item in self.advAiCalcPlayCardReward(game, cardDeck)]
+            for i, v in enumerate(values[:10]):
+                scores[i] = v
+        elif situation == 1:
+            values = [float(v) for v in self.advAiCalcRowReward(game, False)]
+            for i, v in enumerate(values[:4]):
+                scores[10 + i] = v
+        else:
+            values = []
+
+        if not summary:
+            return scores
+        if not values:
+            return [0.0] * 5
+
+        ordered = sorted(values)
+        margin = (ordered[1] - ordered[0]) if len(ordered) > 1 else 0.0
+        return [ordered[0],
+                sum(values) / len(values),
+                margin,
+                float(sum(1 for v in values if v <= 0)),
+                ordered[-1]]
 
     # 方案 A：4 维。用 4 个行尾牌把牌堆切成 4 段，统计每段「已出牌的比例」。
     # 落在这段的牌最终都会贴到「较小的那个行尾」所在行，所以这段越空，往那一行打牌越安全。
@@ -262,7 +296,7 @@ class Player():
 
     def playCard(self, game, cardDeck):
         # 收集 State 信息
-        self.getGameStateToNNData(game)
+        self.getGameStateToNNData(game, 0, cardDeck)
 
         # 选择出哪张牌
         card, index, handcards_dicts = self.chooseCardToPlay(game, cardDeck)
@@ -873,6 +907,10 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         csv_headers = csv_headers.replace(",Action0", "," + ",".join("Played%d" % v for v in range(1, 25)) + ",Action0")
     elif extra_feature_mode == "hand_bullheads":
         csv_headers = csv_headers.replace(",Action0", ",OppScore,MyHandBullheads,OppHandBullheads,Action0")
+    elif extra_feature_mode == "teacher_scores":
+        csv_headers = csv_headers.replace(",Action0", "," + ",".join("TeacherScore%d" % i for i in range(14)) + ",Action0")
+    elif extra_feature_mode == "teacher_summary":
+        csv_headers = csv_headers.replace(",Action0", ",TMin,TMean,TMargin,TSafeCount,TMax,Action0")
     if record_to_file:
         # 每局一份的样本文件（策略采样、评测时不需要，只保留总表）
         if PER_GAME_FILES:
