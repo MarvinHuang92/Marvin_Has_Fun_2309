@@ -28,6 +28,7 @@ def main():
     normalize = len(sys.argv) > 4 and sys.argv[4].lower() not in ("0", "false")
     player_type = sys.argv[5] if len(sys.argv) > 5 else "network"
     seed_base = int(sys.argv[6]) if len(sys.argv) > 6 else SEED_BASE
+    opponent = sys.argv[7] if len(sys.argv) > 7 else "simple_ai"
 
     game_6nimmt.extra_feature_mode = mode
     game_6nimmt.normalize_state = normalize
@@ -45,7 +46,7 @@ def main():
             seed = seed_base + i
             # 同一副牌，神经网络分别坐 P1 / P2，消除座位偏差
             for nn_seat in (0, 1):
-                types = [player_type, "simple_ai"] if nn_seat == 0 else ["simple_ai", player_type]
+                types = [player_type, opponent] if nn_seat == 0 else [opponent, player_type]
                 result = game_6nimmt.run_game(2, seed, False, types, model_path, record_to_file=False)
                 bullheads = result["bullheads"]
                 if result["winner"] == nn_seat:

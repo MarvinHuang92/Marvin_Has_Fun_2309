@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import random, sys, time
+import random, sys, time, os
 import torch  
 from neural_network_6nimmt import load_model
 from neural_network_run import extra_feature_mode, normalize_state
@@ -8,6 +8,94 @@ from policy_6nimmt import load_policy, SCORE_TEMPERATURE
 
 # 策略网络玩家：训练时按概率采样，评测时取 argmax（由 evaluate.py 置 False）
 policy_sample = True
+
+# 搜索型玩家（第九轮）：对每个候选动作做若干次随机 rollout，取期望最好的
+# 这两个参数可以从环境变量覆盖，方便做对照实验
+SEARCH_ROLLOUTS = int(os.environ.get("SEARCH_ROLLOUTS", "12"))
+# "diff" = 自己牛头 − 对手牛头（和胜负一致）；"self" = 只看自己的牛头
+SEARCH_CRITERION = os.environ.get("SEARCH_CRITERION", "diff")
+
+
+def cardBullheads(value):
+    """与 Card.bullheads 相同的计分规则，供快速模拟使用"""
+    if value == 55:
+        return 7
+    if value % 10 == 5:
+        return 2
+    if value % 10 == 0:
+        return 3
+    if value % 11 == 0:
+        return 5
+    return 1
+
+
+def bullheadsBetween(lo, hi, deck_size):
+    return sum(cardBullheads(v) for v in range(max(1, lo), min(deck_size, hi) + 1))
+
+
+def teacherPick(rows, hand, deck_size):
+    """搜索里用的"我自己后续怎么走"：advanced_ai 的估值规则（简化实现）"""
+    ends = [row[-1] for row in rows]
+    blanks = [5 - len(row) for row in rows]
+    row_bh = [sum(cardBullheads(c) for c in row) for row in rows]
+    best_val, best_idx = None, 0
+    for idx, card in enumerate(hand):
+        positives = [(card - e, i) for i, e in enumerate(ends) if card - e > 0]
+        if not positives:
+            val = min(row_bh)
+        else:
+            diff, i = min(positives)
+            if diff <= blanks[i]:
+                val = 0.0
+            else:
+                val = row_bh[i] + blanks[i] * bullheadsBetween(ends[i] + 1, card - 1, deck_size) / float(deck_size)
+        if best_val is None or val < best_val:
+            best_val, best_idx = val, idx
+    return hand[best_idx]
+
+
+def simulateRest(rows, my_hand, opp_hand, my_score, opp_score, first_card, deck_size):
+    """从当前局面把剩下的回合打完：我先出 first_card，之后用老师规则；对手全程随机
+
+    返回 (我的最终牛头, 对手的最终牛头)
+    """
+    rows = [list(row) for row in rows]
+    my, opp = list(my_hand), list(opp_hand)
+    me_score, op_score = my_score, opp_score
+    for k in range(len(my)):
+        mine = first_card if k == 0 else teacherPick(rows, my, deck_size)
+        theirs = opp[random.randrange(len(opp))]
+        for value, is_me in sorted([(mine, True), (theirs, False)]):
+            ends = [row[-1] for row in rows]
+            diffs = [value - end for end in ends]
+            if max(diffs) < 0:                     # 比所有行尾都小，必须吃一行
+                if is_me:
+                    target = min(range(len(rows)), key=lambda i: sum(cardBullheads(c) for c in rows[i]))
+                else:
+                    target = random.randrange(len(rows))
+                taken = sum(cardBullheads(c) for c in rows[target])
+                if is_me:
+                    me_score += taken
+                else:
+                    op_score += taken
+                rows[target] = [value]
+            else:
+                best_diff, target = None, 0
+                for i, diff in enumerate(diffs):
+                    if diff > 0 and (best_diff is None or diff < best_diff):
+                        best_diff, target = diff, i
+                if len(rows[target]) >= 5:         # 该行已满，吃下整行
+                    taken = sum(cardBullheads(c) for c in rows[target])
+                    if is_me:
+                        me_score += taken
+                    else:
+                        op_score += taken
+                    rows[target] = [value]
+                else:
+                    rows[target].append(value)
+        my.remove(mine)
+        opp.remove(theirs)
+    return me_score, op_score
 
 # 打分式策略的采样温度（越小越接近贪心）
 score_temperature = SCORE_TEMPERATURE
@@ -25,6 +113,7 @@ RUN_GAME_COUNTER = 0
 
 class NullFile():
     """评测时用来吞掉文件写入的假文件对象（record_to_file=False）"""
+
     def __enter__(self):
         return self
 
@@ -299,6 +388,29 @@ class Player():
             return int(torch.multinomial(probs, 1).item())
         return int(torch.argmax(logits).item())
 
+    # 搜索型玩家（第九轮）：对每个候选动作做 SEARCH_ROLLOUTS 次随机 rollout
+    # 注意：对手手牌是隐藏信息，这里从「未见过的牌」里随机采样一副，而不是偷看真实手牌
+    def chooseCardBySearch(self, game, cardDeck):
+        rows = [[c.value for c in row if c] for row in game.table]
+        my_hand = [c.value for c in self.handCards]
+        played = set(game.played_cards)
+        unseen = [v for v in range(1, game.deck_size + 1)
+                  if v not in played and v not in my_hand]
+        opp_score = sum(p.bullheads for p in game.playerList if p is not self)
+
+        best_index, best_value = 0, None
+        for idx, card in enumerate(my_hand):
+            total = 0.0
+            for _ in range(SEARCH_ROLLOUTS):
+                opp_hand = random.sample(unseen, len(my_hand))
+                me, op = simulateRest(rows, my_hand, opp_hand, self.bullheads, opp_score,
+                                      card, game.deck_size)
+                total += me if SEARCH_CRITERION == "self" else me - op
+            average = total / SEARCH_ROLLOUTS
+            if best_value is None or average < best_value:
+                best_index, best_value = idx, average
+        return best_index
+
     def playCard(self, game, cardDeck):
         # 收集 State 信息
         self.getGameStateToNNData(game, 0, cardDeck)
@@ -370,6 +482,9 @@ class Player():
         # 打分式策略（第五轮）
         elif self.intellegence == "scorepolicy":
             index = self.neuronScorePolicyCalc(self.NN_data_0, list(range(len(self.handCards))))
+        # 搜索型玩家（第九轮）
+        elif self.intellegence == "search":
+            index = self.chooseCardBySearch(game, cardDeck)
         
         return self.handCards[index], index, handcards_dicts 
         
@@ -413,6 +528,9 @@ class Player():
         # 打分式策略（第五轮）
         elif self.intellegence == "scorepolicy":
             ret = self.neuronScorePolicyCalc(self.NN_data_1, [10, 11, 12, 13]) + 1
+        # 搜索型玩家（第九轮）：吃行直接选牛头最少的一行（这一步的搜索收益很小）
+        elif self.intellegence == "search":
+            ret = bullheads_list.index(min(bullheads_list)) + 1
         
         # 更新 Action 样本集
         action_list = [0]*14
