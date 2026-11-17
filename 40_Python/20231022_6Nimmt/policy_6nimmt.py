@@ -65,3 +65,30 @@ def save_policy(model, path):
         path = os.path.join(MODEL_DIR, path)
     torch.save(model, path)
     print("Saving policy: %s" % path)
+
+
+# ===== 第五轮：打分式策略 =====
+# 直接用 Q 网络的架构（state + 动作 one-hot → 1 个分数），把分数取负再 softmax 当动作概率。
+# 好处：网络能看到「这是哪个动作」，天然解决了「共享隐藏层无法把第 i 张手牌路由到第 i 个输出」的问题。
+
+# 采样温度：分数除以它再 softmax；越小越接近 argmin（贪心）
+SCORE_TEMPERATURE = 1.0
+
+
+def build_action_inputs(states, actions):
+    """把 (state, 动作) 拼成 Q 网络要的输入：state + 14 维 one-hot
+
+    states: (n, state_dim) 张量；actions: (n, k) 张量（每行 k 个候选动作）
+    返回 (n, k, state_dim + 14)
+    """
+    n, k = actions.shape
+    state_dim = states.shape[1]
+    x = states.unsqueeze(1).repeat(1, k, 1)
+    onehot = torch.zeros(n, k, POLICY_ACTIONS)
+    onehot.scatter_(2, actions.unsqueeze(2).long(), 1.0)
+    return torch.cat([x, onehot], dim=2)
+
+
+def scores_to_logits(scores, temperature=SCORE_TEMPERATURE):
+    """Q 分数越小越好，所以取负；温度控制采样随机性"""
+    return -scores / temperature

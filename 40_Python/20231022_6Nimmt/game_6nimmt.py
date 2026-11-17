@@ -4,10 +4,13 @@ import random, sys, time
 import torch  
 from neural_network_6nimmt import load_model
 from neural_network_run import extra_feature_mode, normalize_state
-from policy_6nimmt import load_policy
+from policy_6nimmt import load_policy, SCORE_TEMPERATURE
 
 # 策略网络玩家：训练时按概率采样，评测时取 argmax（由 evaluate.py 置 False）
 policy_sample = True
+
+# 打分式策略的采样温度（越小越接近贪心）
+score_temperature = SCORE_TEMPERATURE
 
 # 是否写「每局一份」的日志/样本；策略采样和评测时只保留总表
 PER_GAME_FILES = True
@@ -194,6 +197,8 @@ class Player():
             return self.calcRowSegmentFeatures(game)
         elif extra_feature_mode == "played_onehot":
             return self.calcPlayedOneHot(game)
+        elif extra_feature_mode == "hand_bullheads":
+            return self.calcHandBullheadFeatures(game)
         else:
             raise ValueError("未知的 extra_feature_mode: %s" % extra_feature_mode)
 
@@ -216,6 +221,16 @@ class Player():
         played = set(game.played_cards)
         return [1 if v in played else 0 for v in range(1, game.deck_size + 1)]
 
+    # 第六轮方案（人类玩家的直觉）：3 维
+    #   1) 其他人已累计的罚分（2 人局就是对手）
+    #   2) 自己手牌的牛头总数
+    #   3) 对手手牌里的牛头总数 = 总牛头 - 已打出 - 自己手牌（总牌堆是固定的，所以能算出来）
+    def calcHandBullheadFeatures(self, game):
+        my_hand = sum(card.bullheads for card in self.handCards)
+        others_score = sum(p.bullheads for p in game.playerList if p is not self)
+        others_hand = game.deck_total_bullheads - game.played_bullheads - my_hand
+        return [others_score, my_hand, others_hand]
+
     # 策略网络的算法（第四轮）：训练时采样、评测时取 argmax，只考虑合法动作
     def neuronPolicyCalc(self, NN_data, action_list):
         s_i = list(NN_data.state)
@@ -226,6 +241,19 @@ class Player():
         for a in action_list:
             mask[a] = 1.0
         logits = logits + (torch.Tensor(mask) - 1.0) * 1e9
+
+        if policy_sample:
+            probs = torch.softmax(logits, 0)
+            return int(torch.multinomial(probs, 1).item())
+        return int(torch.argmax(logits).item())
+
+    # 打分式策略（第五轮）：复用 Q 网络（state + 动作 one-hot → 分数），softmax(-分数/温度) 采样
+    def neuronScorePolicyCalc(self, NN_data, action_list):
+        s_i = list(NN_data.state)
+        x = torch.Tensor([s_i + [1.0 if i == a else 0.0 for i in range(14)] for a in action_list])
+        with torch.no_grad():
+            scores = self.NN_model(x).view(-1)
+        logits = -scores / score_temperature
 
         if policy_sample:
             probs = torch.softmax(logits, 0)
@@ -300,6 +328,9 @@ class Player():
         elif self.intellegence == "policy":
             action_list = list(range(len(self.handCards)))
             index = self.neuronPolicyCalc(self.NN_data_0, action_list)
+        # 打分式策略（第五轮）
+        elif self.intellegence == "scorepolicy":
+            index = self.neuronScorePolicyCalc(self.NN_data_0, list(range(len(self.handCards))))
         
         return self.handCards[index], index, handcards_dicts 
         
@@ -340,6 +371,9 @@ class Player():
         # 策略网络（第四轮）：返回值是 10~13，转成 1~4
         elif self.intellegence == "policy":
             ret = self.neuronPolicyCalc(self.NN_data_1, [10, 11, 12, 13]) - 9
+        # 打分式策略（第五轮）
+        elif self.intellegence == "scorepolicy":
+            ret = self.neuronScorePolicyCalc(self.NN_data_1, [10, 11, 12, 13]) + 1
         
         # 更新 Action 样本集
         action_list = [0]*14
@@ -563,6 +597,12 @@ class Game():
         self.deck_size = players * 10 + 4
         # 已经打出去的牌（含开局 4 张底牌），用于「已出牌集合」类特征
         self.played_cards = []
+        # 已打出牌的牛头总数（含被吃掉的），用于「手牌牛头」类特征
+        self.played_bullheads = 0
+        # 这副牌的总牛头数（创建牌堆后由 run_game 填），用于推算对手手牌
+        self.deck_total_bullheads = 0
+        # 玩家列表（run_game 里填），用于读取其他玩家的分数
+        self.playerList = []
         # 总回合数，默认10
         self.max_round = rounds
         # 剩余回合数，默认10-1
@@ -575,6 +615,7 @@ class Game():
         for item in self.stash:
             # 这张牌已经出场（之后要么进某一行，要么被吃掉），记录下来
             self.played_cards.append(item["card"].value)
+            self.played_bullheads += item["card"].bullheads
             # 计算当前牌与每行最后一张牌的差值
             diffs = []
             for row in range(4):
@@ -691,6 +732,9 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         # 策略网络玩家（第四轮）
         elif player_type == "policy":
             playerList[i].NN_model = load_policy(model_path)
+        # 打分式策略玩家（第五轮）：架构与 Q 网络相同，用同一个加载函数
+        elif player_type == "scorepolicy":
+            playerList[i].NN_model = load_model(model_path)
 
     # 创建牌堆
     # cardDeck = CardDeck()  # 默认情况，104张牌都发出
@@ -721,6 +765,10 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         game.table[i][0] = cardDeck.pop(0)
     # 开局这 4 张也算「已出牌」
     game.played_cards = [game.table[i][0].value for i in range(4)]
+    game.played_bullheads = sum(game.table[i][0].bullheads for i in range(4))
+    # 记录这副牌的总牛头数（用于推算对手手牌）与玩家列表（用于读取对手分数）
+    game.deck_total_bullheads = sum(card.bullheads for card in cardDeck.shadow)
+    game.playerList = playerList
     game.showTable()
 
     # 显示剩余牌堆
@@ -823,6 +871,8 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         csv_headers = csv_headers.replace(",Action0", ",SegRow1,SegRow2,SegRow3,SegRow4,Action0")
     elif extra_feature_mode == "played_onehot":
         csv_headers = csv_headers.replace(",Action0", "," + ",".join("Played%d" % v for v in range(1, 25)) + ",Action0")
+    elif extra_feature_mode == "hand_bullheads":
+        csv_headers = csv_headers.replace(",Action0", ",OppScore,MyHandBullheads,OppHandBullheads,Action0")
     if record_to_file:
         # 每局一份的样本文件（策略采样、评测时不需要，只保留总表）
         if PER_GAME_FILES:
@@ -839,8 +889,9 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
 
 if __name__ == "__main__":
 
-    # 用法: python game_6nimmt.py [players] [random_seed] [statistic] [player_types] [model_path]
+    # 用法: python game_6nimmt.py [players] [random_seed] [statistic] [player_types] [model_path] [extra_feature_mode] [normalize]
     # 例如: python game_6nimmt.py 2 -1 nostat "simple_ai,network" model_30.pth
+    #       python game_6nimmt.py 2 -1 nostat "scorepolicy,advanced_ai" model_score_T05.pth row_segments 0
 
     # 默认值
     players = 2
@@ -858,5 +909,10 @@ if __name__ == "__main__":
         player_types = [t.strip() for t in sys.argv[4].split(",")]
     if len(sys.argv) > 5:
         model_path = sys.argv[5]
-    
+    # 模型的特征配置必须和训练时一致，否则输入维度对不上
+    if len(sys.argv) > 6:
+        extra_feature_mode = sys.argv[6]
+    if len(sys.argv) > 7:
+        normalize_state = sys.argv[7].lower() not in ("0", "false")
+
     run_game(players, random_seed, statistic, player_types, model_path)

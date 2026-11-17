@@ -23,7 +23,7 @@ csv_input = "game_log/02_nn_sample_data_full.csv"
 # "row_segments"  : 4 维，各「行分段」里已出牌的比例（方案 A）
 # "played_onehot" : 24 维，已出牌 one-hot（方案 F 对照组，按 2 人局 24 张牌）
 extra_feature_mode = "none"
-EXTRA_FEATURE_DIMS = {"none": 0, "row_segments": 4, "played_onehot": 24}
+EXTRA_FEATURE_DIMS = {"none": 0, "row_segments": 4, "played_onehot": 24, "hand_bullheads": 3}
 extra_features = EXTRA_FEATURE_DIMS[extra_feature_mode]
 
 # state 归一化（第三轮优化）：把「牌号 1~N / 牛头 0~7 / 空位 0~5 / 人数 2」压到 0~1 附近

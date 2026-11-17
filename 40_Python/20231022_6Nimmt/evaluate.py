@@ -31,7 +31,7 @@ def main():
 
     game_6nimmt.extra_feature_mode = mode
     game_6nimmt.normalize_state = normalize
-    if player_type == "policy":
+    if player_type in ("policy", "scorepolicy"):
         game_6nimmt.policy_sample = False      # 评测时取 argmax，不采样
 
     pairs = game_num // 2
