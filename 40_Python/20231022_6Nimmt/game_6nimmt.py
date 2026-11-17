@@ -24,6 +24,8 @@ SEARCH_EARLY_STOP = os.environ.get("SEARCH_EARLY_STOP", "1") not in ("0", "false
 # 第十二轮：把网络的先验和 rollout 的代价做收缩混合（0 = 只用 rollout）
 #   最终分数 = z(代价) + HYBRID_BLEND * z(网络分数)，两边都按行内标准差归一化
 HYBRID_BLEND = float(os.environ.get("HYBRID_BLEND", "0"))
+# 第十三轮【诊断专用，不是实战策略】：rollout 时直接偷看对手手牌，量"隐藏信息值多少分"
+SEARCH_CHEAT = os.environ.get("SEARCH_CHEAT", "0") not in ("0", "false")
 
 # 第十轮：把搜索的「逐动作代价」记下来当稠密标签（None = 不记）
 # 每条 = state(54) + 14 个动作的代价（非法动作填 0），供 train_policy.py distill_costs 使用
@@ -501,7 +503,16 @@ class Player():
                   if v not in played and v not in my_hand]
         opp_score = sum(p.bullheads for p in game.playerList if p is not self)
 
-        opp_hands = [random.sample(unseen, len(my_hand)) for _ in range(SEARCH_ROLLOUTS)]
+        if SEARCH_CHEAT:      # 诊断：直接知道对手的真实手牌（真实对局不可能，只为量上界）
+            true_hand = next([c.value for c in p.handCards]
+                             for p in game.playerList if p is not self)
+            # 对手可能已经打出本回合的牌（还没结算），那张牌确实未知 -> 从未知牌里补一张
+            spare = [v for v in unseen if v not in true_hand]
+            while len(true_hand) < len(my_hand) and spare:
+                true_hand.append(spare.pop(0))
+            opp_hands = [list(true_hand) for _ in range(SEARCH_ROLLOUTS)]
+        else:
+            opp_hands = [random.sample(unseen, len(my_hand)) for _ in range(SEARCH_ROLLOUTS)]
         per_rollout = []
         batch = max(2, SEARCH_ROLLOUTS // 4)
         for opp_hand in opp_hands:
