@@ -26,6 +26,8 @@ SEARCH_EARLY_STOP = os.environ.get("SEARCH_EARLY_STOP", "1") not in ("0", "false
 HYBRID_BLEND = float(os.environ.get("HYBRID_BLEND", "0"))
 # 第十三轮【诊断专用，不是实战策略】：rollout 时直接偷看对手手牌，量"隐藏信息值多少分"
 SEARCH_CHEAT = os.environ.get("SEARCH_CHEAT", "0") not in ("0", "false")
+# 第十四轮【诊断】：rollout 里"我自己"的延续策略（teacher = 手写规则 / random = 乱出）
+SEARCH_ROLLOUT_POLICY = os.environ.get("SEARCH_ROLLOUT_POLICY", "teacher")
 
 # 第十轮：把搜索的「逐动作代价」记下来当稠密标签（None = 不记）
 # 每条 = state(54) + 14 个动作的代价（非法动作填 0），供 train_policy.py distill_costs 使用
@@ -132,6 +134,13 @@ def placeCard(rows, value, pick_row, deck_size):
     return 0
 
 
+def myRolloutPick(rows, hand, deck_size):
+    """rollout 里"我自己"后续怎么走：默认用老师规则，可切成随机（诊断延续策略的重要性）"""
+    if SEARCH_ROLLOUT_POLICY == "random":
+        return hand[random.randrange(len(hand))]
+    return teacherPick(rows, hand, deck_size)
+
+
 def greedyRow(rows):
     """自己的默认吃行策略：牛头最少的那一行"""
     return min(range(len(rows)), key=lambda i: sum(cardBullheads(c) for c in rows[i]))
@@ -148,7 +157,7 @@ def simulateRest(rows, my_hand, opp_hand, my_score, opp_score, first_card, deck_
     my, opp = list(my_hand), list(opp_hand)
     me_score, op_score = my_score, opp_score
     for k in range(len(my)):
-        mine = first_card if k == 0 else teacherPick(rows, my, deck_size)
+        mine = first_card if k == 0 else myRolloutPick(rows, my, deck_size)
         theirs = opp[random.randrange(len(opp))]
         for value, is_me in sorted([(mine, True), (theirs, False)]):
             def pick(current, is_me=is_me, k=k):
@@ -182,7 +191,7 @@ def simulateAfterRow(rows, my_hand, opp_hand, my_score, opp_score, played_card, 
 
     my, opp = list(my_hand), list(opp_hand[1:])
     for k in range(len(my)):
-        mine = teacherPick(rows, my, deck_size)
+        mine = myRolloutPick(rows, my, deck_size)
         theirs = opp[random.randrange(len(opp))]
         for value, is_me in sorted([(mine, True), (theirs, False)]):
             def pick(current, is_me=is_me):
