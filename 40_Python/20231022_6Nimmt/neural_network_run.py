@@ -17,7 +17,16 @@ plot = True     # 是否显示拟合图像
 
 # 样本参数
 csv_input = "game_log/02_nn_sample_data_full.csv"
-input_col_max = 54  # x的维数，最大值64 -> 54
+
+# 额外特征（第二轮优化）：追加在 40 维 state 之后、14 维 action 之前
+# "none"          : 不加（state 仍是 40 维）
+# "row_segments"  : 4 维，各「行分段」里已出牌的比例（方案 A）
+# "played_onehot" : 24 维，已出牌 one-hot（方案 F 对照组，按 2 人局 24 张牌）
+extra_feature_mode = "none"
+EXTRA_FEATURE_DIMS = {"none": 0, "row_segments": 4, "played_onehot": 24}
+extra_features = EXTRA_FEATURE_DIMS[extra_feature_mode]
+
+input_col_max = 54 + extra_features  # x 的维数 = state(40) + 额外特征 + action(14)
 
 sample_start_tr = 0   # 训练样本起点，最小为0
 batchsize_tr = 8000    # 训练时每组样本数
@@ -28,7 +37,7 @@ batchsize_pr = 1000    # 测试时每组样本数
 
 
 # 模型参数
-model_path = 'model.pth'
+model_path = 'models/model.pth'
 n_features = input_col_max  # 特征数（输入神经元数量，对应样本的维数）
 hidden_layers = 1          # 隐藏层数量
 n_hidden = 12              # 隐藏神经元数量

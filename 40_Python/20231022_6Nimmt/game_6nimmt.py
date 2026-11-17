@@ -3,6 +3,7 @@
 import random, sys, time
 import torch  
 from neural_network_6nimmt import load_model
+from neural_network_run import extra_feature_mode
 
 # 训练样本总表（v2 格式：55 列之后追加 5 列元数据，便于离线重算 reward-to-go）
 SAMPLE_DATA_MASTER = "game_log/02_nn_sample_data_full_v2.csv"
@@ -128,10 +129,42 @@ class Player():
         # 赋值给 NN_data_X，同时加上“场景”状态位
         # 0=出牌时，1=打出最小牌需要收一行时
         # if-else 防止同一回合内 NN_data_1 覆盖了 NN_data_0
+        # 额外特征（已出牌集合等）追加在场景位之后
+        extra = self.calcExtraFeatures(game)
         if situation == 0:
-            self.NN_data_0.state = (state + [situation])
+            self.NN_data_0.state = (state + [situation] + extra)
         elif situation == 1:
-            self.NN_data_1.state = (state + [situation])
+            self.NN_data_1.state = (state + [situation] + extra)
+
+    # 额外特征（第二轮优化）：把「已出牌集合」这类全局信息编码进 state
+    def calcExtraFeatures(self, game):
+        if extra_feature_mode == "none":
+            return []
+        elif extra_feature_mode == "row_segments":
+            return self.calcRowSegmentFeatures(game)
+        elif extra_feature_mode == "played_onehot":
+            return self.calcPlayedOneHot(game)
+        else:
+            raise ValueError("未知的 extra_feature_mode: %s" % extra_feature_mode)
+
+    # 方案 A：4 维。用 4 个行尾牌把牌堆切成 4 段，统计每段「已出牌的比例」。
+    # 落在这段的牌最终都会贴到「较小的那个行尾」所在行，所以这段越空，往那一行打牌越安全。
+    # 注意行尾牌本身不按行号递增，要先排序再切段。
+    def calcRowSegmentFeatures(self, game):
+        row_ends = sorted(self.calcEachRowLastCardValue(game))
+        played = game.played_cards
+        features = []
+        for i, start in enumerate(row_ends):
+            end = row_ends[i + 1] if i + 1 < len(row_ends) else game.deck_size + 1
+            width = max(end - start - 1, 1)  # 段内可能出现的牌数
+            count = sum(1 for v in played if start < v < end)
+            features.append(float(count) / width)
+        return features
+
+    # 方案 F（对照组）：N 维 one-hot，直接标记每张牌有没有被打出，信息无损但维度高
+    def calcPlayedOneHot(self, game):
+        played = set(game.played_cards)
+        return [1 if v in played else 0 for v in range(1, game.deck_size + 1)]
 
     def playCard(self, game, cardDeck):
         # 收集 State 信息
@@ -453,6 +486,10 @@ class Game():
         self.table_data = []
         # 游戏玩家数
         self.players = players
+        # 牌堆大小（每人 10 张 + 4 张底牌）
+        self.deck_size = players * 10 + 4
+        # 已经打出去的牌（含开局 4 张底牌），用于「已出牌集合」类特征
+        self.played_cards = []
         # 总回合数，默认10
         self.max_round = rounds
         # 剩余回合数，默认10-1
@@ -463,6 +500,8 @@ class Game():
         print("Sorting Cards...")
         self.stash = sorted(self.stash, key = lambda i: i["card"])
         for item in self.stash:
+            # 这张牌已经出场（之后要么进某一行，要么被吃掉），记录下来
+            self.played_cards.append(item["card"].value)
             # 计算当前牌与每行最后一张牌的差值
             diffs = []
             for row in range(4):
@@ -602,6 +641,8 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
     # 翻4张底牌
     for i in range(4):
         game.table[i][0] = cardDeck.pop(0)
+    # 开局这 4 张也算「已出牌」
+    game.played_cards = [game.table[i][0].value for i in range(4)]
     game.showTable()
 
     # 显示剩余牌堆
@@ -698,6 +739,11 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
     csv_headers = "HandCard0,,,,,,,,,,,,,,,,,,HandCard9,,BlanksRow1,,,BlanksRow4,LastCardRow1,,,,,,LastCardRow4,,\
         BullheadsRow1,,,BullheadsRow4,Players,leftHandCard,CurrBullheads,Situation,Action0,,,,,,,,,Action9,ChooseRow1,,,ChooseRow4,Reward,\
         GameId,Round,Seat,PenaltyThisRound,ScoreBeforeRound"
+    # 额外特征的列名，保证表头列数与数据一致
+    if extra_feature_mode == "row_segments":
+        csv_headers = csv_headers.replace(",Action0", ",SegRow1,SegRow2,SegRow3,SegRow4,Action0")
+    elif extra_feature_mode == "played_onehot":
+        csv_headers = csv_headers.replace(",Action0", "," + ",".join("Played%d" % v for v in range(1, 25)) + ",Action0")
     with open(nn_sample_data_filename, "w") as f:
         f.write(csv_headers + "\n")
         f.writelines(NN_Sample_Data)

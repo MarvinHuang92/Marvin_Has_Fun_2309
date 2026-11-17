@@ -1,4 +1,5 @@
 import sys
+import os
 import torch    
 from torch import nn
 import matplotlib.pyplot as plt
@@ -61,7 +62,7 @@ def get_data(plot):
         line = contents[i].strip().split(',')
         x_i = []
         for i in range(input_col_max):
-            x_i.append(int(line[i].strip()))
+            x_i.append(float(line[i].strip()))
         x.append(x_i)
         # reward 固定在第 input_col_max 列（后面可能还有 v2 追加的元数据列）
         y.append([float(line[input_col_max].strip())])
@@ -151,9 +152,23 @@ def create_model():
 
     return model
 
+# 模型统一放在 models 目录下
+MODEL_DIR = "models"
+
+
+def resolve_model_path(path):
+    """命令行里可以只写文件名（如 model_30.pth），自动到 models 目录下找"""
+    if os.path.exists(path):
+        return path
+    candidate = os.path.join(MODEL_DIR, os.path.basename(path))
+    if os.path.exists(candidate):
+        return candidate
+    return path
+
+
 # 加载已有的模型（不传 path 时使用 neural_network_run.py 中的 model_path）
 def load_model(path=None):
-    path = model_path if path is None else path
+    path = resolve_model_path(model_path if path is None else path)
     print("Loading model: %s\n" % path)
     # 保存的是整个模型对象，必须完整反序列化（torch>=2.6 默认 weights_only=True 会失败）
     try:
@@ -239,7 +254,7 @@ def model_visualization(model):
         dummy_input = torch.randn(n_classes, n_hidden_3, n_hidden_2, n_hidden, input_col_max)
 
     # 将模型导出为 ONNX 格式
-    path = 'model.onnx'
+    path = os.path.join(MODEL_DIR, 'model.onnx')
     torch.onnx.export(model, dummy_input, path, verbose=True)
 
     # 添加shape信息
