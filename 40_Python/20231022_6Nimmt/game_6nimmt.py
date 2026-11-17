@@ -15,6 +15,21 @@ SEARCH_ROLLOUTS = int(os.environ.get("SEARCH_ROLLOUTS", "12"))
 # "diff" = 自己牛头 − 对手牛头（和胜负一致）；"self" = 只看自己的牛头
 SEARCH_CRITERION = os.environ.get("SEARCH_CRITERION", "diff")
 
+# 第十轮：把搜索的「逐动作代价」记下来当稠密标签（None = 不记）
+# 每条 = state(54) + 14 个动作的代价（非法动作填 0），供 train_policy.py distill_costs 使用
+SEARCH_COST_LOG = None
+# 诊断用：把 rollout 分成前后两半各记一份，用来量「同一局面下搜索自己会不会改主意」
+SEARCH_SPLIT_LOG = None
+
+
+def recordSearchCosts(state, costs, offset=0):
+    """offset: 出牌决策的代价放在 0~9；吃行决策放在 10~13"""
+    if SEARCH_COST_LOG is not None:
+        row = list(state) + [0.0] * 14
+        for i, cost in enumerate(costs):
+            row[len(state) + offset + i] = cost
+        SEARCH_COST_LOG.append(row)
+
 
 def cardBullheads(value):
     """与 Card.bullheads 相同的计分规则，供快速模拟使用"""
@@ -398,18 +413,29 @@ class Player():
                   if v not in played and v not in my_hand]
         opp_score = sum(p.bullheads for p in game.playerList if p is not self)
 
-        best_index, best_value = 0, None
-        for idx, card in enumerate(my_hand):
-            total = 0.0
-            for _ in range(SEARCH_ROLLOUTS):
-                opp_hand = random.sample(unseen, len(my_hand))
+        # 公共随机数：同一批对手手牌喂给所有候选动作，动作之间的差值才可比、噪声才小
+        opp_hands = [random.sample(unseen, len(my_hand)) for _ in range(SEARCH_ROLLOUTS)]
+        per_rollout = []
+        for opp_hand in opp_hands:
+            row = []
+            for card in my_hand:
                 me, op = simulateRest(rows, my_hand, opp_hand, self.bullheads, opp_score,
                                       card, game.deck_size)
-                total += me if SEARCH_CRITERION == "self" else me - op
-            average = total / SEARCH_ROLLOUTS
-            if best_value is None or average < best_value:
-                best_index, best_value = idx, average
-        return best_index
+                row.append(me if SEARCH_CRITERION == "self" else me - op)
+            per_rollout.append(row)
+        costs = [sum(column) / float(SEARCH_ROLLOUTS) for column in zip(*per_rollout)]
+
+        self.search_costs = dict(zip(my_hand, costs))
+        recordSearchCosts(self.NN_data_0.state, costs)
+        if SEARCH_SPLIT_LOG is not None and SEARCH_ROLLOUTS >= 4:
+            half = SEARCH_ROLLOUTS // 2
+            first = [sum(c) / float(half) for c in zip(*per_rollout[:half])]
+            second = [sum(c) / float(len(per_rollout) - half) for c in zip(*per_rollout[half:])]
+            SEARCH_SPLIT_LOG.append((list(my_hand),
+                                     first.index(min(first)),
+                                     second.index(min(second)),
+                                     min(sorted(costs)[1:]) - min(costs) if len(costs) > 1 else 0.0))
+        return costs.index(min(costs))
 
     def playCard(self, game, cardDeck):
         # 收集 State 信息
@@ -485,6 +511,9 @@ class Player():
         # 搜索型玩家（第九轮）
         elif self.intellegence == "search":
             index = self.chooseCardBySearch(game, cardDeck)
+            # 第十轮：把启发式 reward 换成搜索算出的逐动作代价（样本里的标签因此变准）
+            for item in handcards_dicts:
+                item["reward"] = self.search_costs[item["card"].value]
         
         return self.handCards[index], index, handcards_dicts 
         
@@ -531,6 +560,7 @@ class Player():
         # 搜索型玩家（第九轮）：吃行直接选牛头最少的一行（这一步的搜索收益很小）
         elif self.intellegence == "search":
             ret = bullheads_list.index(min(bullheads_list)) + 1
+            recordSearchCosts(self.NN_data_1.state, bullheads_list, offset=10)
         
         # 更新 Action 样本集
         action_list = [0]*14

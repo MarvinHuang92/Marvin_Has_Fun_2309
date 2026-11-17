@@ -12,6 +12,8 @@
   python train_policy.py imitate <数据.csv> <输出.pth> [epochs] [玩家类型]
   python train_policy.py imitate_score <数据.csv> <输出.pth> [epochs] [温度]
   python train_policy.py sample  <策略模型.pth> <局数> <输出.csv> [起始种子] [玩家类型] [mode] [normalize] [对手]
+  python train_policy.py sample_search <局数> <样本.csv> <代价.csv> [起始种子] [mode] [对手] [rollout]
+  python train_policy.py distill_costs <代价.csv> <输出.pth> [epochs] [温度] [hidden]
   python train_policy.py train   <数据.csv> <策略模型.pth> [epochs] [lr] [熵权重]
   python train_policy.py train_score <数据.csv> <模型.pth> [epochs] [lr] [温度] [熵权重]
 
@@ -122,6 +124,113 @@ def sample(policy_path, game_num, out_csv, seed_base=800000, player_type="policy
             game_6nimmt.run_game(2, seed_base + i, False,
                                  [player_type, opponent], policy_path, record_to_file=True)
     print("采样完成: %d 局（%s vs %s）-> %s" % (game_num, player_type, opponent, out_csv))
+    return 0
+
+
+def sample_search(game_num, sample_csv, cost_csv, seed_base=800000, mode="none", opponent="simple_ai", rollouts=12):
+    """第十轮：让搜索型玩家打 game_num 局，同时产出两份数据
+
+    - sample_csv：常规样本表（动作 one-hot + 搜索代价当 reward），给 imitate_score 用
+    - cost_csv  ：逐动作代价表（state 54 列 + 14 个动作的代价），给 distill_costs 用
+    """
+    import contextlib
+    import io
+
+    game_6nimmt.extra_feature_mode = mode
+    game_6nimmt.normalize_state = False
+    game_6nimmt.PER_GAME_FILES = False
+    game_6nimmt.SAMPLE_DATA_MASTER = sample_csv
+    game_6nimmt.SEARCH_COST_LOG = []
+    if rollouts:
+        game_6nimmt.SEARCH_ROLLOUTS = rollouts
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        for i in range(game_num):
+            game_6nimmt.run_game(2, seed_base + i, False,
+                                 ["search", opponent], None, record_to_file=True)
+
+    with open(cost_csv, "w") as f:
+        for line in game_6nimmt.SEARCH_COST_LOG:
+            f.write(",".join("%.6f" % v for v in line) + "\n")
+    print("采样完成: %d 局（search vs %s，rollout=%d）" % (game_num, opponent, game_6nimmt.SEARCH_ROLLOUTS))
+    print("  样本 -> %s" % sample_csv)
+    print("  代价 -> %s（%d 条决策）" % (cost_csv, len(game_6nimmt.SEARCH_COST_LOG)))
+    game_6nimmt.SEARCH_COST_LOG = None
+    return 0
+
+
+def distill_costs(cost_csv, out_path, epochs=150, temperature=1.0, hidden=120, batch=1024):
+    """第十轮：用「逐动作代价」做软标签蒸馏。
+
+    和 imitate_score（只学"选中了哪个动作"）不同，这里每个动作都有代价，
+    把它转成玻尔兹曼分布当软标签 —— 代价接近的动作得到接近的概率，
+    这正是搜索信息的价值：**知道次优解差多少**，而不只是一个 argmin。
+    """
+    from neural_network_template import Network
+
+    x_list, cost_list, mask_list = [], [], []
+    with open(cost_csv) as f:
+        for line in f:
+            if not line.strip():
+                continue
+            vals = [float(v) for v in line.split(",")]
+            state, costs = vals[:-ACTION_DIM], vals[-ACTION_DIM:]
+            situation = int(round(state[39]))
+            hand_count = int(round(state[37]))
+            legal = legal_mask(situation, hand_count)
+            if sum(legal) < 2:
+                continue                       # 只有一个合法动作，没有学习信号
+            x_list.append(state)
+            cost_list.append(costs)
+            mask_list.append(legal)
+    if not x_list:
+        print("没有读到有效的代价样本")
+        return 1
+
+    x = torch.Tensor(x_list)
+    costs = torch.Tensor(cost_list)
+    mask = torch.Tensor(mask_list)
+    # 行内标准化：代价的绝对值（对手也会吃多少）没用，只有"动作之间差多少"有用
+    legal_count = mask.sum(dim=1, keepdim=True).clamp(min=1.0)
+    mean = (costs * mask).sum(dim=1, keepdim=True) / legal_count
+    var = (((costs - mean) * mask) ** 2).sum(dim=1, keepdim=True) / legal_count
+    z = -(costs - mean) / torch.sqrt(var + 1e-6)          # 越小越好 → 取负号变成越大越好
+    target = torch.softmax(z / temperature + (mask - 1.0) * 1e9, dim=1)
+
+    state_dim = x.shape[1]
+    model = Network(state_dim + ACTION_DIM, hidden, 1, torch.relu)
+    print("隐藏单元: %d，参数量: %d，样本数: %d"
+          % (hidden, sum(p.numel() for p in model.parameters()), len(x_list)))
+    optimizer = torch.optim.Adam(model.parameters(), 1e-3)
+    all_actions = torch.arange(ACTION_DIM).unsqueeze(0)
+    n = x.shape[0]
+    best_index = costs + (1.0 - mask) * 1e9          # 非法动作推到极大，argmin 才只看合法动作
+    best_index = best_index.argmin(dim=1)
+
+    for epoch in range(epochs):
+        order = torch.randperm(n)
+        total = 0.0
+        for start in range(0, n, batch):
+            idx = order[start:start + batch]
+            acts = all_actions.repeat(len(idx), 1)
+            scores = model(build_action_inputs(x[idx], acts).view(-1, state_dim + ACTION_DIM)).view(-1, ACTION_DIM)
+            logp = torch.log_softmax(-scores / temperature + (mask[idx] - 1.0) * 1e9, dim=1)
+            loss = -(target[idx] * logp).sum(dim=1).mean()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            total += loss.item() * len(idx)
+        if epoch % 25 == 0 or epoch == epochs - 1:
+            with torch.no_grad():
+                acts = all_actions.repeat(n, 1)
+                scores = model(build_action_inputs(x, acts).view(-1, state_dim + ACTION_DIM)).view(-1, ACTION_DIM)
+                logp = torch.log_softmax(-scores / temperature + (mask - 1.0) * 1e9, dim=1)
+                agree = (logp.argmax(1) == best_index).float().mean().item()
+                kl = (target * (torch.log(target + 1e-12) - logp)).sum(dim=1).mean().item()
+            print("epoch %3d  loss %.4f  与 argmin(代价) 一致率 %.2f%%  软标签 KL %.4f"
+                  % (epoch, total / n, 100 * agree, kl))
+
+    save_policy(model, out_path)
     return 0
 
 
@@ -452,6 +561,17 @@ def main():
         lr = float(sys.argv[5]) if len(sys.argv) > 5 else 3e-4
         entropy = float(sys.argv[6]) if len(sys.argv) > 6 else 0.0
         return train(sys.argv[2], sys.argv[3], epochs, lr, 4096, entropy)
+    if cmd == "sample_search":
+        seed = int(sys.argv[5]) if len(sys.argv) > 5 else 800000
+        mode = sys.argv[6] if len(sys.argv) > 6 else "none"
+        opponent = sys.argv[7] if len(sys.argv) > 7 else "simple_ai"
+        rollouts = int(sys.argv[8]) if len(sys.argv) > 8 else 12
+        return sample_search(int(sys.argv[2]), sys.argv[3], sys.argv[4], seed, mode, opponent, rollouts)
+    if cmd == "distill_costs":
+        epochs = int(sys.argv[4]) if len(sys.argv) > 4 else 150
+        temperature = float(sys.argv[5]) if len(sys.argv) > 5 else 1.0
+        hidden = int(sys.argv[6]) if len(sys.argv) > 6 else 120
+        return distill_costs(sys.argv[2], sys.argv[3], epochs, temperature, hidden)
     if cmd == "train_score":
         epochs = int(sys.argv[4]) if len(sys.argv) > 4 else 8
         lr = float(sys.argv[5]) if len(sys.argv) > 5 else 3e-4
