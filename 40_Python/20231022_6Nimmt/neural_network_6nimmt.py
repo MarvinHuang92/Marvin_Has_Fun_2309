@@ -150,10 +150,15 @@ def create_model():
 
     return model
 
-# 加载已有的模型
-def load_model():
-    print("Loading model: %s\n" % model_path)
-    return torch.load(model_path)
+# 加载已有的模型（不传 path 时使用 neural_network_run.py 中的 model_path）
+def load_model(path=None):
+    path = model_path if path is None else path
+    print("Loading model: %s\n" % path)
+    # 保存的是整个模型对象，必须完整反序列化（torch>=2.6 默认 weights_only=True 会失败）
+    try:
+        return torch.load(path, weights_only=False)
+    except TypeError:  # torch<1.13 没有 weights_only 参数
+        return torch.load(path)
 
 # 保存模型
 def save_model(model):

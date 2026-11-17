@@ -513,22 +513,20 @@ class Game():
 
 
 # 游戏主进程
-def run_game(players, random_seed, statistic):
+# player_types: 每个玩家的智能程度，可选 simple_ai / advanced_ai / human / network
+#               不传时全部为 simple_ai（普通电脑，随机出牌）
+# model_path:   神经网络玩家加载的模型文件，不传时使用 neural_network_run.py 中的 model_path
+def run_game(players, random_seed, statistic, player_types=None, model_path=None):
 
     # 玩家数量 (2-10)
     PLAYERS = players
     # 每人手牌数 = 回合数，默认10
     HANDCARDS = 10
 
-    # 人类玩家列表
-    human_player_indexes = []
-    # human_player_indexes = [0]
-    # 高级电脑玩家列表
-    advanced_ai_indexes = []
-    # advanced_ai_indexes = [1]
-    # 神经网络玩家列表
-    network_player_indexes = []
-    # network_player_indexes = [-1]
+    if player_types is None:
+        player_types = ["simple_ai"] * PLAYERS
+    if len(player_types) != PLAYERS:
+        raise ValueError("player_types 数量(%d)与玩家数(%d)不一致" % (len(player_types), PLAYERS))
 
     # 强制随机数种子
     # random_seed = 1
@@ -548,16 +546,11 @@ def run_game(players, random_seed, statistic):
         eval("playerList.append(P%d)" %i)
     
     # 赋予玩家不同身份
-    # 人类
-    for i in human_player_indexes:
-        playerList[i].intellegence = "human"
-    # 高级电脑
-    for i in advanced_ai_indexes:
-        playerList[i].intellegence = "advanced_ai"
-    # 神经网络
-    for i in network_player_indexes:
-        playerList[i].intellegence = "network"
-        playerList[i].NN_model = load_model()
+    for i, player_type in enumerate(player_types):
+        playerList[i].intellegence = player_type
+        # 神经网络玩家需要加载模型
+        if player_type == "network":
+            playerList[i].NN_model = load_model(model_path)
 
     # 创建牌堆
     # cardDeck = CardDeck()  # 默认情况，104张牌都发出
@@ -686,15 +679,24 @@ def run_game(players, random_seed, statistic):
 
 if __name__ == "__main__":
 
+    # 用法: python game_6nimmt.py [players] [random_seed] [statistic] [player_types] [model_path]
+    # 例如: python game_6nimmt.py 2 -1 nostat "simple_ai,network" model_30.pth
+
     # 默认值
     players = 2
     random_seed = -1
     statistic = False
+    player_types = None
+    model_path = None
     
     # 如果有参数输入
     if len(sys.argv) > 3:
         players = int(sys.argv[1])
         random_seed = int(sys.argv[2])
         statistic = sys.argv[3] == "statistic"
+    if len(sys.argv) > 4:
+        player_types = [t.strip() for t in sys.argv[4].split(",")]
+    if len(sys.argv) > 5:
+        model_path = sys.argv[5]
     
-    run_game(players, random_seed, statistic)
+    run_game(players, random_seed, statistic, player_types, model_path)

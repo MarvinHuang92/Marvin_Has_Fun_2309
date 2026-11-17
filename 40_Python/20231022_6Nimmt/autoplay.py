@@ -121,7 +121,7 @@ def init_record_folder(game_log_folder, game_result_stat_path, players):
         f.write("Winner\n")
         f.close()
 
-def autorun_game(game_num, players):
+def autorun_game(game_num, players, player_types=None, model_path=None):
     
     # 初始随机种子：100000以内正整数
     init_random_seed = random.randint(1,100000)
@@ -136,7 +136,7 @@ def autorun_game(game_num, players):
         print("\n==================== Start Game %d =======================" % i)
 
         # 内部函数调用，速度更快
-        game_6nimmt.run_game(players, init_random_seed+i, statistic=True)
+        game_6nimmt.run_game(players, init_random_seed+i, statistic=True, player_types=player_types, model_path=model_path)
         
         # 外部参数调用，可以打印完整log文件
         # os.system("%s game_6nimmt.py %d %d statistic > game_log\\autoplay\\game_log_%d.txt" % (python_exe, players, init_random_seed+i, init_random_seed+i))
@@ -148,10 +148,26 @@ def autorun_game(game_num, players):
 
 if __name__ == "__main__":
 
+    # 用法: python autoplay.py [game_num] [players] [player_types] [model_path]
+    # 例如: python autoplay.py 1000 2 "simple_ai,network" model_30.pth
+
     # 连续进行局数
     GAME_NUM = 1000
     # 玩家数量
     PLAYERS = 2
+    # 玩家智能程度（按顺序对应 P1, P2...），不传则全部为 simple_ai
+    player_types = None
+    # 神经网络玩家使用的模型
+    model_path = None
+
+    if len(sys.argv) > 1:
+        GAME_NUM = int(sys.argv[1])
+    if len(sys.argv) > 2:
+        PLAYERS = int(sys.argv[2])
+    if len(sys.argv) > 3:
+        player_types = [t.strip() for t in sys.argv[3].split(",")]
+    if len(sys.argv) > 4:
+        model_path = sys.argv[4]
 
     # 游戏结果的保存位置
     game_log_folder = "game_log"
@@ -162,7 +178,7 @@ if __name__ == "__main__":
     init_record_folder(game_log_folder, game_result_stat_path, PLAYERS)
 
     # 自动运行多局游戏
-    autorun_game(GAME_NUM, PLAYERS)
+    autorun_game(GAME_NUM, PLAYERS, player_types, model_path)
 
     # 结果统计
     game_result_statistics(game_result_stat_path, game_result_summary_path, PLAYERS)
