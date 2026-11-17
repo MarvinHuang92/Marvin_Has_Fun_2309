@@ -4,6 +4,13 @@ import random, sys, time
 import torch  
 from neural_network_6nimmt import load_model
 from neural_network_run import extra_feature_mode, normalize_state
+from policy_6nimmt import load_policy
+
+# 策略网络玩家：训练时按概率采样，评测时取 argmax（由 evaluate.py 置 False）
+policy_sample = True
+
+# 是否写「每局一份」的日志/样本；策略采样和评测时只保留总表
+PER_GAME_FILES = True
 
 # 训练样本总表（v2 格式：55 列之后追加 5 列元数据，便于离线重算 reward-to-go）
 SAMPLE_DATA_MASTER = "game_log/02_nn_sample_data_full_v2.csv"
@@ -11,6 +18,24 @@ SAMPLE_DATA_MASTER = "game_log/02_nn_sample_data_full_v2.csv"
 # 进程启动时间戳 + 对局计数器，用于生成不重复的 game_id
 RUN_TIME_TAG = time.strftime("%Y%m%d%H%M%S", time.localtime())
 RUN_GAME_COUNTER = 0
+
+
+class NullFile():
+    """评测时用来吞掉文件写入的假文件对象（record_to_file=False）"""
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def write(self, *args):
+        pass
+
+    def writelines(self, *args):
+        pass
+
+    def close(self):
+        pass
 
 # 用于神经网络训练的样本集，每个回合，每个玩家出牌时，更新一组
 # State / Action 在玩家的 playCard() 方法中更新
@@ -191,6 +216,22 @@ class Player():
         played = set(game.played_cards)
         return [1 if v in played else 0 for v in range(1, game.deck_size + 1)]
 
+    # 策略网络的算法（第四轮）：训练时采样、评测时取 argmax，只考虑合法动作
+    def neuronPolicyCalc(self, NN_data, action_list):
+        s_i = list(NN_data.state)
+        x = torch.Tensor([s_i])
+        logits = self.NN_model(x)[0]
+
+        mask = [0.0] * 14
+        for a in action_list:
+            mask[a] = 1.0
+        logits = logits + (torch.Tensor(mask) - 1.0) * 1e9
+
+        if policy_sample:
+            probs = torch.softmax(logits, 0)
+            return int(torch.multinomial(probs, 1).item())
+        return int(torch.argmax(logits).item())
+
     def playCard(self, game, cardDeck):
         # 收集 State 信息
         self.getGameStateToNNData(game)
@@ -255,6 +296,10 @@ class Player():
                 action_list.append(i)  # 手牌的脚标，0-9
             # 计算最优 action
             index = self.neuronNetworkCalc(self.NN_data_0, action_list)
+        # 策略网络（第四轮）
+        elif self.intellegence == "policy":
+            action_list = list(range(len(self.handCards)))
+            index = self.neuronPolicyCalc(self.NN_data_0, action_list)
         
         return self.handCards[index], index, handcards_dicts 
         
@@ -292,6 +337,9 @@ class Player():
             action_list = [10,11,12,13]  # 要收牌的行号，1-4行对应 action 脚标 10-13
             # 计算最优 action，注意结果也要+1
             ret = self.neuronNetworkCalc(self.NN_data_1, action_list) + 1
+        # 策略网络（第四轮）：返回值是 10~13，转成 1~4
+        elif self.intellegence == "policy":
+            ret = self.neuronPolicyCalc(self.NN_data_1, [10, 11, 12, 13]) - 9
         
         # 更新 Action 样本集
         action_list = [0]*14
@@ -598,7 +646,9 @@ class Game():
 # player_types: 每个玩家的智能程度，可选 simple_ai / advanced_ai / human / network
 #               不传时全部为 simple_ai（普通电脑，随机出牌）
 # model_path:   神经网络玩家加载的模型文件，不传时使用 neural_network_run.py 中的 model_path
-def run_game(players, random_seed, statistic, player_types=None, model_path=None):
+# record_to_file: 是否写对局日志/训练样本；评测时可以关掉，避免污染训练集
+# 返回：{"bullheads": [各玩家罚分], "winner": 胜者脚标(0-based)}
+def run_game(players, random_seed, statistic, player_types=None, model_path=None, record_to_file=True):
 
     # 玩家数量 (2-10)
     PLAYERS = players
@@ -638,6 +688,9 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         # 神经网络玩家需要加载模型
         if player_type == "network":
             playerList[i].NN_model = load_model(model_path)
+        # 策略网络玩家（第四轮）
+        elif player_type == "policy":
+            playerList[i].NN_model = load_policy(model_path)
 
     # 创建牌堆
     # cardDeck = CardDeck()  # 默认情况，104张牌都发出
@@ -700,7 +753,8 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
             # 两者都发生在结算之前，所以共享同一个 reward-to-go
             for data, is_used in ((p.NN_data_0, p.NN_data_0.action[0] != -1),
                                   (p.NN_data_1, p.NN_data_1.action[0] != -1 and p.played_smallest)):
-                if not is_used:  # 神经网络玩家的动作，不加入样本
+                # 神经网络玩家的动作不加入样本；评测时不写样本
+                if not (is_used and record_to_file):
                     continue
                 data.game_id = game_id
                 data.round = i + 1
@@ -728,7 +782,7 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         game_result_filename = "game_log/autoplay/game_result_%d.txt" % random_seed
     bullhead_list = []
     bullhead_list_noised = []
-    with open(game_result_filename, "w") as f:
+    with (open(game_result_filename, "w") if (record_to_file and PER_GAME_FILES) else NullFile()) as f:
         for i in range(PLAYERS):
             bullhead_list.append(playerList[i].bullheads)
             # 根据随机数种子，给牛头数增加小于1的修正值，确保有有多个玩家牛头最少时，winner能够随机分布
@@ -742,7 +796,7 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         f.write("\n\n# bullheads with noise:\n%s" % str(bullhead_list_noised))
         f.close()
     
-    if statistic:
+    if statistic and record_to_file:
         # 在已有的文件后面添加行
         with open("game_log/00_statistics.csv", "a") as f:
             f.write("%d," % random_seed)
@@ -769,14 +823,19 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         csv_headers = csv_headers.replace(",Action0", ",SegRow1,SegRow2,SegRow3,SegRow4,Action0")
     elif extra_feature_mode == "played_onehot":
         csv_headers = csv_headers.replace(",Action0", "," + ",".join("Played%d" % v for v in range(1, 25)) + ",Action0")
-    with open(nn_sample_data_filename, "w") as f:
-        f.write(csv_headers + "\n")
-        f.writelines(NN_Sample_Data)
-        f.close()
-    # 历史总表
-    with open(SAMPLE_DATA_MASTER, "a") as f:
-        f.writelines(NN_Sample_Data)
-        f.close()
+    if record_to_file:
+        # 每局一份的样本文件（策略采样、评测时不需要，只保留总表）
+        if PER_GAME_FILES:
+            with open(nn_sample_data_filename, "w") as f:
+                f.write(csv_headers + "\n")
+                f.writelines(NN_Sample_Data)
+                f.close()
+        # 历史总表
+        with open(SAMPLE_DATA_MASTER, "a") as f:
+            f.writelines(NN_Sample_Data)
+            f.close()
+
+    return {"bullheads": bullhead_list, "winner": winner}
 
 if __name__ == "__main__":
 
