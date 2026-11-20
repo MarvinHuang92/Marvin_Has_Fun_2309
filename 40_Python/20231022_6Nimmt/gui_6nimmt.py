@@ -79,7 +79,9 @@ def type_label(t):
 MODEL_TYPES = {"hybrid", "scorepolicy", "network", "policy"}
 
 # 模型路径（Lv2 / Lv3 用；load_model 会自动到 models/ 下找）
-MODEL_PATH = "model_searchc_25k400_ts.pth"
+#   model_mix10k：2/3/5/7/10 人混合训练，多人局明显强于旧的 2 人局专用模型
+#   想换回旧的 2 人局冠军：set NIMMT_MODEL=model_searchc_25k400_ts.pth
+MODEL_PATH = os.environ.get("NIMMT_MODEL", "model_mix10k.pth")
 # Lv3 的算力：网络先筛前 HYBRID_TOP_K 名，每个候选做这么多次 rollout
 HYBRID_ROLLOUTS = int(os.environ.get("NIMMT_HYBRID_M", "24"))
 # 提示用的 rollout 次数（提示走的是纯搜索）
