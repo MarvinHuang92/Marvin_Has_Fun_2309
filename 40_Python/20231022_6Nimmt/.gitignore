@@ -1,2 +1,5 @@
 game_log/*
 !game_log/02_nn_sample_data_full.csv
+
+# 输入法 / 三方程序有时会往工作目录里丢日志
+debug.log
