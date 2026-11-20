@@ -127,11 +127,14 @@ def sample(policy_path, game_num, out_csv, seed_base=800000, player_type="policy
     return 0
 
 
-def sample_search(game_num, sample_csv, cost_csv, seed_base=800000, mode="none", opponent="simple_ai", rollouts=12):
+def sample_search(game_num, sample_csv, cost_csv, seed_base=800000, mode="none", opponent="simple_ai", rollouts=12, players=2):
     """第十轮：让搜索型玩家打 game_num 局，同时产出两份数据
 
     - sample_csv：常规样本表（动作 one-hot + 搜索代价当 reward），给 imitate_score 用
     - cost_csv  ：逐动作代价表（state 54 列 + 14 个动作的代价），给 distill_costs 用
+
+    players：几人局。>2 时搜索会走 simulateRestN（每回合摆 N 张牌、采 N-1 家手牌），
+    单局成本约是 2 人局的 N/2 倍。
     """
     import contextlib
     import io
@@ -144,15 +147,17 @@ def sample_search(game_num, sample_csv, cost_csv, seed_base=800000, mode="none",
     if rollouts:
         game_6nimmt.SEARCH_ROLLOUTS = rollouts
 
+    types = ["search"] + [opponent] * (players - 1)
     with contextlib.redirect_stdout(io.StringIO()):
         for i in range(game_num):
-            game_6nimmt.run_game(2, seed_base + i, False,
-                                 ["search", opponent], None, record_to_file=True)
+            game_6nimmt.run_game(players, seed_base + i, False,
+                                 types, None, record_to_file=True)
 
     with open(cost_csv, "w") as f:
         for line in game_6nimmt.SEARCH_COST_LOG:
             f.write(",".join("%.6f" % v for v in line) + "\n")
-    print("采样完成: %d 局（search vs %s，rollout=%d）" % (game_num, opponent, game_6nimmt.SEARCH_ROLLOUTS))
+    print("采样完成: %d 局（%d 人局，search vs %s×%d，rollout=%d）"
+          % (game_num, players, opponent, players - 1, game_6nimmt.SEARCH_ROLLOUTS))
     print("  样本 -> %s" % sample_csv)
     print("  代价 -> %s（%d 条决策）" % (cost_csv, len(game_6nimmt.SEARCH_COST_LOG)))
     game_6nimmt.SEARCH_COST_LOG = None
@@ -566,7 +571,9 @@ def main():
         mode = sys.argv[6] if len(sys.argv) > 6 else "none"
         opponent = sys.argv[7] if len(sys.argv) > 7 else "simple_ai"
         rollouts = int(sys.argv[8]) if len(sys.argv) > 8 else 12
-        return sample_search(int(sys.argv[2]), sys.argv[3], sys.argv[4], seed, mode, opponent, rollouts)
+        players = int(sys.argv[9]) if len(sys.argv) > 9 else 2
+        return sample_search(int(sys.argv[2]), sys.argv[3], sys.argv[4], seed,
+                             mode, opponent, rollouts, players)
     if cmd == "distill_costs":
         epochs = int(sys.argv[4]) if len(sys.argv) > 4 else 150
         temperature = float(sys.argv[5]) if len(sys.argv) > 5 else 1.0

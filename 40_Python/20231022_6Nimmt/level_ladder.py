@@ -88,6 +88,7 @@ def play_one(roster, model, seed):
 def main():
     n_games = int(sys.argv[1]) if len(sys.argv) > 1 else 500
     seed0 = int(sys.argv[2]) if len(sys.argv) > 2 else SEED0
+    model_path = sys.argv[3] if len(sys.argv) > 3 else MODEL
     engine.extra_feature_mode = "teacher_scores"
     engine.normalize_state = False
     engine.policy_sample = False
@@ -95,7 +96,7 @@ def main():
     engine.SEARCH_ROLLOUTS = 8
 
     with contextlib.redirect_stdout(io.StringIO()):
-        model = engine.load_model(MODEL)
+        model = engine.load_model(model_path)
 
     stats = {s: {"pts": [], "rank": [], "first": 0, "last": 0} for s in STRATS}
     t0 = time.time()
