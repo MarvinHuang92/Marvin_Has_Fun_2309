@@ -28,6 +28,13 @@ HYBRID_BLEND = float(os.environ.get("HYBRID_BLEND", "0"))
 SEARCH_CHEAT = os.environ.get("SEARCH_CHEAT", "0") not in ("0", "false")
 # 第十四轮【诊断】：rollout 里"我自己"的延续策略（teacher = 手写规则 / random = 乱出）
 SEARCH_ROLLOUT_POLICY = os.environ.get("SEARCH_ROLLOUT_POLICY", "teacher")
+# L1（价值头早停）：rollout 只往前推这么多回合，剩下的用一个价值估计收尾
+#   0 = 不截断（原行为）；1~3 = 截断深度。见 bootstrapValue()
+HYBRID_DEPTH = int(os.environ.get("HYBRID_DEPTH", "0"))
+# 统计"一共模拟了多少个回合"，用来比较不同配置的算力开销
+ROLLOUT_STEPS = [0]
+# 统计 bootstrap 被调用了多少次（每次是一次额外的网络前向）
+BOOTSTRAP_CALLS = [0]
 
 # 第十轮：把搜索的「逐动作代价」记下来当稠密标签（None = 不记）
 # 每条 = state(54) + 14 个动作的代价（非法动作填 0），供 train_policy.py distill_costs 使用
@@ -173,6 +180,7 @@ def simulateRest(rows, my_hand, opp_hand, my_score, opp_score, first_card, deck_
                 op_score += taken
         my.remove(mine)
         opp.remove(theirs)
+        ROLLOUT_STEPS[0] += 1
     return me_score, op_score
 
 
@@ -203,7 +211,63 @@ def simulateAfterRow(rows, my_hand, opp_hand, my_score, opp_score, played_card, 
                 opp_score += taken
         my.remove(mine)
         opp.remove(theirs)
+        ROLLOUT_STEPS[0] += 1
     return me_score, opp_score
+
+
+# ---------------- L1：截断 rollout + 价值头 ----------------
+def simulatePartial(rows, my_hand, opp_hand, my_score, opp_score, first_card,
+                    deck_size, depth):
+    """往前推 depth 个回合就停，返回 (我, 对手, 桌面, 我的手牌)
+
+    depth <= 0 或 >= 手牌数 时推到底（等价于 simulateRest）。
+    跟 simulateRest 的区别只是"什么时候停"，其余完全一样。
+    """
+    rows = [list(r) for r in rows]
+    my, opp = list(my_hand), list(opp_hand)
+    me, op = my_score, opp_score
+    turns = len(my) if depth <= 0 else min(depth, len(my))
+    for k in range(turns):
+        mine = first_card if k == 0 else myRolloutPick(rows, my, deck_size)
+        theirs = opp[random.randrange(len(opp))]
+        for value, is_me in sorted([(mine, True), (theirs, False)]):
+            def pick(current, is_me=is_me):
+                return greedyRow(current) if is_me else random.randrange(len(current))
+            taken = placeCard(rows, value, pick, deck_size)
+            if is_me:
+                me += taken
+            else:
+                op += taken
+        my.remove(mine)
+        opp.remove(theirs)
+        ROLLOUT_STEPS[0] += 1
+    return me, op, rows, my
+
+
+def teacherScoresFromRows(rows, hand, deck_size):
+    """按 advAiCalcPlayCardReward 的公式算逐动作估值（给 bootstrap 拼特征用）
+
+    注意分母写死 104、空位数按 5 列算 —— 必须和训练时的特征完全一致，
+    否则网络看到的输入分布就变了。
+    """
+    ends = [r[-1] for r in rows]
+    blanks = [5 - len(r) for r in rows]
+    rb = [sum(cardBullheads(c) for c in r) for r in rows]
+    out = [0.0] * 14                 # 和 calcTeacherFeature 一样：定长 14，前 10 位是手牌估值
+    for i, card in enumerate(hand[:10]):
+        best_d, idx = None, -1
+        for j, e in enumerate(ends):
+            d = card - e
+            if d > 0 and (best_d is None or d < best_d):
+                best_d, idx = d, j
+        if idx < 0:
+            out[i] = float(min(rb))
+        elif best_d <= blanks[idx]:
+            out[i] = 0.0
+        else:
+            out[i] = rb[idx] + blanks[idx] * bullheadsBetween(ends[idx] + 1, card - 1,
+                                                             deck_size) / 104.0
+    return out
 
 # 打分式策略的采样温度（越小越接近贪心）
 score_temperature = SCORE_TEMPERATURE
@@ -501,6 +565,46 @@ class Player():
             return int(torch.multinomial(probs, 1).item())
         return int(torch.argmax(logits).item())
 
+    # L1：本局的 rollout 截断深度。返回 0 表示不截断
+    #   优先用实例上的 search_depth（对照实验里两个座位可以不同），否则用全局 HYBRID_DEPTH。
+    #   只有「带模型 + diff 准则 + teacher_scores 特征」时才能 bootstrap，
+    #   因为 Q 是 diff 单位、而且输入维度要跟训练时一致。
+    def rolloutDepth(self):
+        d = getattr(self, "search_depth", None)
+        if d is None:
+            d = HYBRID_DEPTH
+        if d <= 0 or self.NN_model is None or SEARCH_CRITERION == "self":
+            return 0
+        if extra_feature_mode != "teacher_scores":
+            return 0
+        return d
+
+    # L1：截断 rollout 的叶子价值 —— 用打分网络估 min_a Q(s, a)
+    #   Q 是「搜索蒸馏」出来的逐动作代价，单位就是 diff（我 − 对手），
+    #   所以它可以直接接到「me - op」这个代价后面
+    def bootstrapValue(self, rows, hand, my_score, players, deck_size):
+        if not hand:
+            return 0.0
+        ends = [r[-1] for r in rows]
+        state = []
+        for i in range(10):                      # 手牌（不足补 0）
+            if i < len(hand):
+                state += [hand[i], cardBullheads(hand[i])]
+            else:
+                state += [0, 0]
+        state += [5 - len(r) for r in rows]      # 每行空位
+        for i in range(4):                       # 行尾牌
+            state += [ends[i], cardBullheads(ends[i])]
+        state += [sum(cardBullheads(c) for c in r) for r in rows]   # 每行牛头
+        state += [players, len(hand), my_score, 0]                  # 场景位 0 = 出牌
+        state += teacherScoresFromRows(rows, hand, deck_size)       # 老师估值特征
+        legal = list(range(len(hand)))
+        x = [state + [1.0 if j == a else 0.0 for j in range(14)] for a in legal]
+        with torch.no_grad():
+            q = self.NN_model(torch.Tensor(x)).view(-1)
+        BOOTSTRAP_CALLS[0] += 1
+        return float(q.min())
+
     # 搜索型玩家（第九轮）：对给定候选动作做 SEARCH_ROLLOUTS 次 rollout，返回每个候选的平均代价
     # 注意：对手手牌是隐藏信息，这里从「未见过的牌」里随机采样一副，而不是偷看真实手牌
     # 公共随机数：同一批对手手牌喂给所有候选动作，动作之间的差值才可比、噪声才小
@@ -524,12 +628,21 @@ class Player():
             opp_hands = [random.sample(unseen, len(my_hand)) for _ in range(SEARCH_ROLLOUTS)]
         per_rollout = []
         batch = max(2, SEARCH_ROLLOUTS // 4)
+        depth = self.rolloutDepth()
         for opp_hand in opp_hands:
             row = []
             for idx in candidate_indexes:
-                me, op = simulateRest(rows, my_hand, opp_hand, self.bullheads, opp_score,
-                                      my_hand[idx], game.deck_size)
-                row.append(me if SEARCH_CRITERION == "self" else me - op)
+                if depth > 0:
+                    # L1：只推 depth 个回合，剩下的用 min_a Q(s,a) 收尾
+                    me, op, r2, h2 = simulatePartial(rows, my_hand, opp_hand, self.bullheads,
+                                                     opp_score, my_hand[idx],
+                                                     game.deck_size, depth)
+                    leaf = self.bootstrapValue(r2, h2, me, game.players, game.deck_size)
+                    row.append(me - op + leaf)
+                else:
+                    me, op = simulateRest(rows, my_hand, opp_hand, self.bullheads, opp_score,
+                                          my_hand[idx], game.deck_size)
+                    row.append(me if SEARCH_CRITERION == "self" else me - op)
             per_rollout.append(row)
             # 自适应预算：小批跑完就能分出胜负就不再浪费 rollout
             if (SEARCH_EARLY_STOP and len(candidate_indexes) > 1 and len(per_rollout) >= 2 * batch
@@ -1065,7 +1178,8 @@ class Game():
 # model_path:   神经网络玩家加载的模型文件，不传时使用 neural_network_run.py 中的 model_path
 # record_to_file: 是否写对局日志/训练样本；评测时可以关掉，避免污染训练集
 # 返回：{"bullheads": [各玩家罚分], "winner": 胜者脚标(0-based)}
-def run_game(players, random_seed, statistic, player_types=None, model_path=None, record_to_file=True):
+def run_game(players, random_seed, statistic, player_types=None, model_path=None,
+             record_to_file=True, player_opts=None):
 
     # 玩家数量 (2-10)
     PLAYERS = players
@@ -1124,6 +1238,12 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         elif player_type == "gbm":
             from gbdt import load_model as load_gbdt_model
             playerList[i].NN_model = load_gbdt_model(model_paths[i])
+
+    # 每个座位的额外设置（比如 search_depth 不同，用于 L1 的对照实验）
+    if player_opts:
+        for i in range(min(len(player_opts), PLAYERS)):
+            for k, v in (player_opts[i] or {}).items():
+                setattr(playerList[i], k, v)
 
     # 创建牌堆
     # cardDeck = CardDeck()  # 默认情况，104张牌都发出
