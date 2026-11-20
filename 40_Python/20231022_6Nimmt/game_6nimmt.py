@@ -1100,22 +1100,30 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         eval("playerList.append(P%d)" %i)
     
     # 赋予玩家不同身份
+    # model_path 可以是单个路径（所有人都用它），也可以是按座位排的列表
+    #   —— 后者用于「新一代 vs 上一代」的对照评测
+    if isinstance(model_path, (list, tuple)):
+        model_paths = list(model_path)
+        if len(model_paths) < PLAYERS:
+            raise ValueError("model_path 列表长度(%d) < 玩家人数(%d)" % (len(model_paths), PLAYERS))
+    else:
+        model_paths = [model_path] * PLAYERS
     for i, player_type in enumerate(player_types):
         playerList[i].intellegence = player_type
         # 神经网络玩家需要加载模型
         if player_type == "network":
-            playerList[i].NN_model = load_model(model_path)
+            playerList[i].NN_model = load_model(model_paths[i])
         # 策略网络玩家（第四轮）
         elif player_type == "policy":
-            playerList[i].NN_model = load_policy(model_path)
+            playerList[i].NN_model = load_policy(model_paths[i])
         # 打分式策略玩家（第五轮）：架构与 Q 网络相同，用同一个加载函数
         # 混合型玩家（第十一轮）也用打分网络做剪枝
         elif player_type in ("scorepolicy", "hybrid"):
-            playerList[i].NN_model = load_model(model_path)
+            playerList[i].NN_model = load_model(model_paths[i])
         # 树集成对照实验：GBDT（见 gbdt.py，懒加载避免 torch 环境也要 numpy）
         elif player_type == "gbm":
             from gbdt import load_model as load_gbdt_model
-            playerList[i].NN_model = load_gbdt_model(model_path)
+            playerList[i].NN_model = load_gbdt_model(model_paths[i])
 
     # 创建牌堆
     # cardDeck = CardDeck()  # 默认情况，104张牌都发出
