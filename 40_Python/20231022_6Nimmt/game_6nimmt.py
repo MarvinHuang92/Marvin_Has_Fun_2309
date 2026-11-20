@@ -678,7 +678,11 @@ class Player():
         # 混合型玩家（第十一轮）：网络剪枝 + 前 K 名 rollout
         elif self.intellegence == "hybrid":
             index = self.chooseCardByHybrid(game, cardDeck)
-        
+        # GBDT（树集成对照实验）：输入拼法与 Q 网络完全一样，只把函数族从 MLP 换成树
+        elif self.intellegence == "gbm":
+            action_list = list(range(len(self.handCards)))
+            index = self.neuronGBMCalc(self.NN_data_0, action_list)
+
         return self.handCards[index], index, handcards_dicts 
         
 
@@ -732,6 +736,9 @@ class Player():
                 ret = self.chooseRowBySearch(game, card) + 1
             else:
                 ret = bullheads_list.index(min(bullheads_list)) + 1
+        # GBDT（树集成对照）
+        elif self.intellegence == "gbm":
+            ret = self.neuronGBMCalc(self.NN_data_1, [10, 11, 12, 13]) + 1
         
         # 更新 Action 样本集
         action_list = [0]*14
@@ -875,6 +882,17 @@ class Player():
             
         # 输出预测reward（罚分）最小的action
         return h_list.index(min(h_list))
+
+    # GBDT 的算法（树集成对照）：输入拼法与 neuronNetworkCalc 完全一致
+    def neuronGBMCalc(self, NN_data, action_list):
+        s_i = list(NN_data.state)
+        x_list = []
+        for a in action_list:
+            real_action_list = [0] * 14
+            real_action_list[a] = 1
+            x_list.append(s_i + real_action_list)
+        scores = list(self.NN_model.predict(x_list))
+        return scores.index(min(scores))
 
 
 # 定义“牌”类
@@ -1094,6 +1112,10 @@ def run_game(players, random_seed, statistic, player_types=None, model_path=None
         # 混合型玩家（第十一轮）也用打分网络做剪枝
         elif player_type in ("scorepolicy", "hybrid"):
             playerList[i].NN_model = load_model(model_path)
+        # 树集成对照实验：GBDT（见 gbdt.py，懒加载避免 torch 环境也要 numpy）
+        elif player_type == "gbm":
+            from gbdt import load_model as load_gbdt_model
+            playerList[i].NN_model = load_gbdt_model(model_path)
 
     # 创建牌堆
     # cardDeck = CardDeck()  # 默认情况，104张牌都发出
