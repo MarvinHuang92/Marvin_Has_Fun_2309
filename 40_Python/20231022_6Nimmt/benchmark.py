@@ -21,9 +21,9 @@ SEED_BASE = 950000
 
 # (显示名, 玩家类型, 模型文件)
 CONTESTANTS = [
-    ("hybrid K3M24", "hybrid", "model_searchc_25k400_ts.pth"),
+    ("hybrid K3M24", "hybrid", "model_mix10k.pth"),
     ("search M24", "search", None),
-    ("scorepolicy", "scorepolicy", "model_searchc_25k400_ts.pth"),
+    ("scorepolicy", "scorepolicy", "model_mix10k.pth"),
     ("advanced_ai", "advanced_ai", None),
 ]
 

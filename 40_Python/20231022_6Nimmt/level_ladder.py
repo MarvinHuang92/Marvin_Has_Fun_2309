@@ -21,7 +21,7 @@ import time
 
 import game_6nimmt as engine
 
-MODEL = "model_searchc_25k400_ts.pth"
+MODEL = "model_mix10k.pth"   # 和 GUI 默认一致（混合人数训练）
 HYBRID_M = 24
 SEED0 = 950000
 N_PLAYERS = 5
