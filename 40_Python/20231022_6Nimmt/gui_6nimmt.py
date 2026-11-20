@@ -85,8 +85,8 @@ HYBRID_ROLLOUTS = int(os.environ.get("NIMMT_HYBRID_M", "24"))
 # 提示用的 rollout 次数（提示走的是纯搜索）
 HINT_ROLLOUTS = int(os.environ.get("NIMMT_HINT_M", "8"))
 
-HINT_LABELS = ["关闭提示", "Lv1 启发式", "搜索"]
-HINT_MODES = ["off", "adv", "search"]
+HINT_LABELS = ["关闭提示", "Lv1 启发式", "Lv2 神经网络", "Lv3 网络+搜索"]
+HINT_MODES = ["off", "lv1", "lv2", "lv3"]
 
 REPLAY_DIR = os.path.join("game_log", "replays")
 
@@ -341,7 +341,7 @@ class NimmtGUI(object):
         tk.Label(btns, text="提示：", bg=BG, fg=FG, font=self.font).pack(
             side="left", padx=(20, 2))
         self.hint_combo = ttk.Combobox(btns, values=HINT_LABELS, state="readonly",
-                                       width=10, font=self.font)
+                                       width=16, font=self.font)
         self.hint_combo.current(0)
         self.hint_combo.pack(side="left")
         self.hint_combo.bind("<<ComboboxSelected>>", self._on_hint_change)
@@ -508,6 +508,9 @@ class NimmtGUI(object):
         self.game.deck_total_bullheads = sum(c.bullheads for c in deck.shadow)
         self.me.handCards.sort()
         self.me.chooseRowWhenSmallest = self._human_row_choice   # 用弹窗替代 input()
+        # 人类的 rollout 次数按 Lv3 的规格来（提示用），吃行搜索关闭（L1 负结果）
+        self.me.rollout_count = HYBRID_ROLLOUTS
+        self.me.search_depth = 0
 
         self.round = 0
         self.pending = None
@@ -619,17 +622,23 @@ class NimmtGUI(object):
         best = None
         try:
             with quiet():
-                if mode == "adv":
+                if mode == "lv1":
                     ds = self.me.advAiCalcPlayCardReward(self.game, self.deck)
                     best = min(range(len(ds)), key=lambda i: ds[i]["reward"])
                     self.hint_label = "Lv1 启发式"
-                else:
-                    # searchCostsFor 会往 self.search_costs 里写，人类玩家没初始化过
-                    self.me.search_costs = {}
-                    costs = self.me.searchCostsFor(self.game,
-                                                   list(range(len(self.me.handCards))))
-                    best = costs.index(min(costs))
-                    self.hint_label = "搜索"
+                elif mode == "lv2":
+                    if self._ensure_hint_model():
+                        self.me.getGameStateToNNData(self.game, 0, self.deck)
+                        legal = list(range(len(self.me.handCards)))
+                        sc = self.me.scorePolicyScores(self.me.NN_data_0, legal)
+                        best = int(min(range(len(sc)), key=lambda i: sc[i]))
+                        self.hint_label = "Lv2 神经网络"
+                else:                          # lv3：网络剪枝 + rollout
+                    if self._ensure_hint_model():
+                        self.me.getGameStateToNNData(self.game, 0, self.deck)
+                        self.me.search_costs = {}
+                        best = self.me.chooseCardByHybrid(self.game, self.deck)
+                        self.hint_label = "Lv3 网络+搜索"
         except Exception as exc:             # 提示失败不该影响游戏
             self.log_line("（提示计算失败：%s）" % exc)
         finally:
@@ -638,6 +647,19 @@ class NimmtGUI(object):
             self.hint_index = best
             self.log_line("        提示（%s）：建议出 %d"
                           % (self.hint_label, self.me.handCards[best].value))
+
+    def _ensure_hint_model(self):
+        """Lv2 / Lv3 提示需要模型；局中没加载过就临时加载一次"""
+        if self.me.NN_model is not None:
+            return True
+        try:
+            with quiet():
+                self.me.NN_model = engine.load_model(MODEL_PATH)
+            engine.extra_feature_mode = "teacher_scores"
+            return True
+        except Exception as exc:
+            self.log_line("（提示需要模型，加载失败：%s）" % exc)
+            return False
 
     # ---------------- 人类交互 ----------------
     def ask_card(self):

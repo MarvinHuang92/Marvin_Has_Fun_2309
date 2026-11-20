@@ -26,6 +26,16 @@ SEARCH_EARLY_STOP = os.environ.get("SEARCH_EARLY_STOP", "1") not in ("0", "false
 HYBRID_BLEND = float(os.environ.get("HYBRID_BLEND", "0"))
 # 第十三轮【诊断专用，不是实战策略】：rollout 时直接偷看对手手牌，量"隐藏信息值多少分"
 SEARCH_CHEAT = os.environ.get("SEARCH_CHEAT", "0") not in ("0", "false")
+# 老师估值里的那个分母：正确做法是「牌堆大小」（2 人局 24、10 人局 104）。
+# 历史代码写死 104，等于在 2 人局把危险度压小了 4 倍多。
+# 设 TEACHER_DIVISOR=104 可以完全复现旧行为 —— 用来评估按旧分母训练的模型。
+TEACHER_USE_DECK = os.environ.get("TEACHER_DIVISOR", "deck").lower() != "104"
+
+
+def teacherDivisor(deck_size):
+    return float(deck_size) if TEACHER_USE_DECK else 104.0
+
+
 # 第十四轮【诊断】：rollout 里"我自己"的延续策略（teacher = 手写规则 / random = 乱出）
 SEARCH_ROLLOUT_POLICY = os.environ.get("SEARCH_ROLLOUT_POLICY", "teacher")
 # L1（价值头早停）：rollout 只往前推这么多回合，剩下的用一个价值估计收尾
@@ -196,7 +206,10 @@ def simulateRestN(rows, my_hand, opp_hands, my_score, opp_scores, first_card, de
     me = my_score
     ops = list(opp_scores)
     for k in range(len(my)):
-        mine = first_card if k == 0 else myRolloutPick(rows, my, deck_size)
+        if k == 0 and first_card is not None:
+            mine = first_card
+        else:
+            mine = myRolloutPick(rows, my, deck_size)
         plays = [(mine, -1)]
         picks = []
         for i, h in enumerate(opps):
@@ -249,6 +262,22 @@ def simulateAfterRow(rows, my_hand, opp_hand, my_score, opp_score, played_card, 
     return me_score, opp_score
 
 
+def simulateAfterRowN(rows, my_hand, pending_cards, opp_future_hands, my_score, opp_scores,
+                      played_card, target_row, deck_size):
+    """N 人局版：我打出全场最小、现在挑一行吃掉
+
+    顺序按规则：我先吃掉 target_row（我的牌成为该行第一张），
+    再把**本回合剩下的牌**（`pending_cards`，都是明牌，来自 game.stash）依次落下，
+    最后用 N 人 rollout 打完剩下的回合。
+    """
+    rows = [list(r) for r in rows]
+    me = my_score + sum(cardBullheads(c) for c in rows[target_row])
+    rows[target_row] = [played_card]
+    for v in sorted(pending_cards):
+        placeCard(rows, v, lambda r: random.randrange(len(r)), deck_size)
+    return simulateRestN(rows, my_hand, opp_future_hands, me, opp_scores, None, deck_size)
+
+
 # ---------------- L1：截断 rollout + 价值头 ----------------
 def simulatePartial(rows, my_hand, opp_hand, my_score, opp_score, first_card,
                     deck_size, depth):
@@ -281,12 +310,13 @@ def simulatePartial(rows, my_hand, opp_hand, my_score, opp_score, first_card,
 def teacherScoresFromRows(rows, hand, deck_size):
     """按 advAiCalcPlayCardReward 的公式算逐动作估值（给 bootstrap 拼特征用）
 
-    注意分母写死 104、空位数按 5 列算 —— 必须和训练时的特征完全一致，
-    否则网络看到的输入分布就变了。
+    分母走 teacherDivisor（默认牌堆大小），空位数按 5 列算 —— 必须和引擎里
+    advAiCalcPlayCardReward 完全一致，否则网络看到的输入分布就变了。
     """
     ends = [r[-1] for r in rows]
     blanks = [5 - len(r) for r in rows]
     rb = [sum(cardBullheads(c) for c in r) for r in rows]
+    div = teacherDivisor(deck_size)
     out = [0.0] * 14                 # 和 calcTeacherFeature 一样：定长 14，前 10 位是手牌估值
     for i, card in enumerate(hand[:10]):
         best_d, idx = None, -1
@@ -299,8 +329,8 @@ def teacherScoresFromRows(rows, hand, deck_size):
         elif best_d <= blanks[idx]:
             out[i] = 0.0
         else:
-            out[i] = rb[idx] + blanks[idx] * bullheadsBetween(ends[idx] + 1, card - 1,
-                                                             deck_size) / 104.0
+            out[i] = (rb[idx] + blanks[idx] * bullheadsBetween(ends[idx] + 1, card - 1,
+                                                               deck_size) / div)
     return out
 
 # 打分式策略的采样温度（越小越接近贪心）
@@ -753,23 +783,51 @@ class Player():
     def chooseRowBySearch(self, game, card):
         rows = [[c.value for c in row if c] for row in game.table]
         my_hand = [c.value for c in self.handCards]
+        n_players = len(game.playerList) if game.playerList else game.players
+        rounds = self.rolloutCount()
+        costs = []
+
+        if n_players > 2:
+            # 本回合还没结算的牌都是明牌（在 game.stash 里，且都比我的牌大）
+            pending = [it["card"].value for it in game.stash if it["card"].value > card.value]
+            played = set(game.played_cards) | set(pending)
+            unseen = [v for v in range(1, game.deck_size + 1)
+                      if v not in played and v not in my_hand]
+            opp_scores = [p.bullheads for p in game.playerList if p is not self]
+            need = (n_players - 1) * len(my_hand)
+            hand_sets = []
+            for _ in range(rounds):
+                pool = random.sample(unseen, min(need, len(unseen)))
+                while len(pool) < need:
+                    pool.append(random.choice(unseen))
+                h = len(my_hand)
+                hand_sets.append([pool[i * h:(i + 1) * h] for i in range(n_players - 1)])
+            for target in range(len(rows)):
+                total = 0.0
+                for S in hand_sets:
+                    me, ops = simulateAfterRowN(rows, my_hand, pending, S, self.bullheads,
+                                                opp_scores, card.value, target,
+                                                game.deck_size)
+                    total += (me if SEARCH_CRITERION == "self"
+                              else me - sum(ops) / float(len(ops)))
+                costs.append(total / float(rounds))
+            return costs.index(min(costs))
+
+        # 2 人局：保持原样（不要动，之前所有 2 人局数字都依赖这条路径）
         played = set(game.played_cards)
         unseen = [v for v in range(1, game.deck_size + 1)
                   if v not in played and v not in my_hand]
         opp_score = sum(p.bullheads for p in game.playerList if p is not self)
-
         # 吃行时我已打出本回合的牌（手牌 n-1 张），对手手上还有 n 张未知的牌
         # （n-1 张手牌 + 本回合已打出但还没结算的那张），所以采样 n 张
-        opp_hands = [random.sample(unseen, len(my_hand) + 1)
-                     for _ in range(self.rolloutCount())]
-        costs = []
+        opp_hands = [random.sample(unseen, len(my_hand) + 1) for _ in range(rounds)]
         for target in range(len(rows)):
             total = 0.0
             for opp_hand in opp_hands:
                 me, op = simulateAfterRow(rows, my_hand, opp_hand, self.bullheads, opp_score,
                                           card.value, target, game.deck_size)
                 total += me if SEARCH_CRITERION == "self" else me - op
-            costs.append(total / float(self.rolloutCount()))
+            costs.append(total / float(rounds))
         return costs.index(min(costs))
 
     def playCard(self, game, cardDeck):
@@ -906,8 +964,7 @@ class Player():
         # 混合型玩家（第十一轮）：吃行和搜索型保持一致，好把差别只归到"出牌选择"上
         # 第十二轮：改成也搜索 —— 4 个候选行各 rollout 一遍（HYBRID_ROW_SEARCH=0 可关掉）
         elif self.intellegence == "hybrid":
-            # 吃行搜索目前只有 2 人版；多人局退回「吃牛头最少的一行」（实测这一档只值 +0.4 分）
-            if HYBRID_ROW_SEARCH and len(game.playerList) <= 2:
+            if HYBRID_ROW_SEARCH:
                 ret = self.chooseRowBySearch(game, card) + 1
             else:
                 ret = bullheads_list.index(min(bullheads_list)) + 1
@@ -968,9 +1025,15 @@ class Player():
                 # 1A. 0 < 手牌-某行最大牌 <= 该行空位数+两者之间曾出现过的牌数量，同上（算法后续补充）
                 if closest_positive_diff <= each_row_blanks[closest_row_index-1]:
                     handcards_dicts.append({"card": handcard, "class": "safe", "target_row": closest_row_index, "reward": 0})
-                # 2. X(danger)：除了上述两种，预期分值=该行已有牛头数+空格数*(手牌-该行最大牌(不含两端)之间的牛头数)/104 (暂不考虑已出现过的牌)
+                # 2. X(danger)：预期分值 = 该行已有牛头数 + 空格数 × 两牌之间的牛头数 / 牌堆大小
+                #    （分母应该是牌堆大小：2 人局 24、10 人局 104；历史上写死 104，见 teacherDivisor）
                 else:
-                    reward_exp = bullheads_list[closest_row_index-1] + each_row_blanks[closest_row_index-1]*float(cardDeck.calcBullheadsBetween(each_row_last_card_value[closest_row_index-1]+1,handcard.value-1))/104
+                    reward_exp = (bullheads_list[closest_row_index - 1]
+                                  + each_row_blanks[closest_row_index - 1]
+                                  * float(cardDeck.calcBullheadsBetween(
+                                      each_row_last_card_value[closest_row_index - 1] + 1,
+                                      handcard.value - 1))
+                                  / teacherDivisor(game.deck_size))
                     handcards_dicts.append({"card": handcard, "class": "danger", "target_row": closest_row_index, "reward": reward_exp})
         
         if display:
