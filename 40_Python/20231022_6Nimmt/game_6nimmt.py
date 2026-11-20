@@ -565,6 +565,12 @@ class Player():
             return int(torch.multinomial(probs, 1).item())
         return int(torch.argmax(logits).item())
 
+    # 这个座位每个候选做多少次 rollout：优先用实例上的 rollout_count，否则用全局
+    #   —— 有了它，同一局里可以让 search 用 8 次、hybrid 用 24 次，各取所需
+    def rolloutCount(self):
+        n = getattr(self, "rollout_count", None)
+        return SEARCH_ROLLOUTS if n is None else int(n)
+
     # L1：本局的 rollout 截断深度。返回 0 表示不截断
     #   优先用实例上的 search_depth（对照实验里两个座位可以不同），否则用全局 HYBRID_DEPTH。
     #   只有「带模型 + diff 准则 + teacher_scores 特征」时才能 bootstrap，
@@ -616,6 +622,7 @@ class Player():
                   if v not in played and v not in my_hand]
         opp_score = sum(p.bullheads for p in game.playerList if p is not self)
 
+        rounds = self.rolloutCount()
         if SEARCH_CHEAT:      # 诊断：直接知道对手的真实手牌（真实对局不可能，只为量上界）
             true_hand = next([c.value for c in p.handCards]
                              for p in game.playerList if p is not self)
@@ -623,11 +630,11 @@ class Player():
             spare = [v for v in unseen if v not in true_hand]
             while len(true_hand) < len(my_hand) and spare:
                 true_hand.append(spare.pop(0))
-            opp_hands = [list(true_hand) for _ in range(SEARCH_ROLLOUTS)]
+            opp_hands = [list(true_hand) for _ in range(rounds)]
         else:
-            opp_hands = [random.sample(unseen, len(my_hand)) for _ in range(SEARCH_ROLLOUTS)]
+            opp_hands = [random.sample(unseen, len(my_hand)) for _ in range(rounds)]
         per_rollout = []
-        batch = max(2, SEARCH_ROLLOUTS // 4)
+        batch = max(2, rounds // 4)
         depth = self.rolloutDepth()
         for opp_hand in opp_hands:
             row = []
@@ -700,7 +707,8 @@ class Player():
 
         # 吃行时我已打出本回合的牌（手牌 n-1 张），对手手上还有 n 张未知的牌
         # （n-1 张手牌 + 本回合已打出但还没结算的那张），所以采样 n 张
-        opp_hands = [random.sample(unseen, len(my_hand) + 1) for _ in range(SEARCH_ROLLOUTS)]
+        opp_hands = [random.sample(unseen, len(my_hand) + 1)
+                     for _ in range(self.rolloutCount())]
         costs = []
         for target in range(len(rows)):
             total = 0.0
@@ -708,7 +716,7 @@ class Player():
                 me, op = simulateAfterRow(rows, my_hand, opp_hand, self.bullheads, opp_score,
                                           card.value, target, game.deck_size)
                 total += me if SEARCH_CRITERION == "self" else me - op
-            costs.append(total / float(SEARCH_ROLLOUTS))
+            costs.append(total / float(self.rolloutCount()))
         return costs.index(min(costs))
 
     def playCard(self, game, cardDeck):

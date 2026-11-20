@@ -16,6 +16,12 @@
     存档   -> 每局结束自动写 game_log/replays/*.json（一轮一个快照）
     回放   -> 「回放…」按钮载入存档，逐回合前后翻
 
+对手类型：随机 / 手写启发式 / 搜索型 / 混合型（hybrid）。混合型需要
+`model_searchc_25k400_ts.pth`，会自动切到 teacher_scores 特征。
+两类 rollout 次数可用环境变量调：NIMMT_SEARCH_M（默认 8）、NIMMT_HYBRID_M（默认 24）。
+实测（每局耗时 / 对随机胜率）：search M8 ≈ 28ms/89.3%，hybrid M24 ≈ 39ms/94.0%，
+search M24 ≈ 81ms/93.3%。（一局 10 回合，所以单个决策只有 3~8ms。）
+
 尺寸会按真实 DPI 和屏幕可用空间等比缩放（高分屏 200% 缩放时不这么做会超出屏幕）。
 
 用法：
@@ -50,8 +56,17 @@ OPP_TYPES = [
     ("随机", "simple_ai"),
     ("手写启发式 advanced_ai", "advanced_ai"),
     ("搜索型 search", "search"),
+    ("混合型 hybrid（更强）", "hybrid"),
 ]
 TYPE_NAME = {v: k for k, v in OPP_TYPES}
+MODEL_TYPES = {"hybrid", "scorepolicy", "network", "policy"}
+
+# 模型路径（hybrid 用；load_model 会自动到 models/ 下找）
+MODEL_PATH = "model_searchc_25k400_ts.pth"
+# 各类型的 rollout 次数：search 沿用界面的 8 次（够用且快），hybrid 用 24 次
+#   —— 实测 hybrid K3M24 与 search M24 打平（48.6%），但每个决策便宜一半
+SEARCH_ROLLOUTS = int(os.environ.get("NIMMT_SEARCH_M", "8"))
+HYBRID_ROLLOUTS = int(os.environ.get("NIMMT_HYBRID_M", "24"))
 
 HINT_LABELS = ["关闭提示", "adv_ai", "搜索型"]
 HINT_MODES = ["off", "adv", "search"]
@@ -348,7 +363,8 @@ class NimmtGUI(object):
 
         n_var = tk.IntVar(value=4)
         seed_var = tk.StringVar(value="")
-        type_vars = [tk.StringVar(value=OPP_TYPES[i % len(OPP_TYPES)][1]) for i in range(9)]
+        # 默认在「随机 / advanced_ai / search」之间轮换（hybrid 要加载模型，让用户自己选）
+        type_vars = [tk.StringVar(value=OPP_TYPES[i % 3][1]) for i in range(9)]
 
         tk.Label(dlg, text="你是 P1，其余都是电脑", bg=BG, fg=FG,
                  font=self.font_b).grid(row=0, column=0, columnspan=3, sticky="w",
@@ -425,13 +441,37 @@ class NimmtGUI(object):
 
     # ---------------- 建局 ----------------
     def start_game(self, cfg):
-        engine.SEARCH_ROLLOUTS = 8          # 交互时别用 12 次 rollout，太慢
         n = cfg["n"]
         self.players = [engine.Player("P%d" % (i + 1)) for i in range(n)]
         self.me = self.players[0]
         self.me.intellegence = "human"
+
+        # 有 hybrid 才需要模型和 teacher_scores 特征
+        need_model = any(t in MODEL_TYPES for t in cfg["types"])
+        model = None
+        load_err = None
+        if need_model:
+            try:
+                with quiet():
+                    model = engine.load_model(MODEL_PATH)
+                engine.extra_feature_mode = "teacher_scores"
+            except Exception as exc:
+                load_err = "%s —— 混合型降级为 advanced_ai" % exc
+        else:
+            engine.extra_feature_mode = "none"
+        engine.policy_sample = False
+
         for i, t in enumerate(cfg["types"]):
-            self.players[i + 1].intellegence = t
+            p = self.players[i + 1]
+            p.intellegence = t
+            if t in MODEL_TYPES:
+                if model is not None:
+                    p.NN_model = model
+                else:
+                    p.intellegence = "advanced_ai"
+            p.rollout_count = (HYBRID_ROLLOUTS if p.intellegence == "hybrid"
+                               else SEARCH_ROLLOUTS)
+            p.search_depth = 0          # L1 关闭（实测截断会掉强度）
 
         self.game = engine.Game(n, 10)
         self.game.playerList = self.players
@@ -464,6 +504,10 @@ class NimmtGUI(object):
         }
         self.log_clear()
         self.log_line("新局开始：%d 人（你 + %d 个电脑），种子 %s" % (n, n - 1, cfg["seed"]))
+        self.log_line("算力：search=%d 次 rollout，hybrid=%d 次（K=%d）"
+                      % (SEARCH_ROLLOUTS, HYBRID_ROLLOUTS, engine.HYBRID_TOP_K))
+        if load_err:
+            self.log_line("！模型加载失败：%s" % load_err)
         self.log_line("对手：" + "，".join("P%d=%s" % (i + 2, TYPE_NAME[t])
                                           for i, t in enumerate(cfg["types"])))
         for rnd in range(self.game.max_round):
