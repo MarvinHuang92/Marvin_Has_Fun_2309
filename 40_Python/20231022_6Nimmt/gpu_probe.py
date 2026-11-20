@@ -10,12 +10,14 @@
 装了 CUDA 版 torch 之后，同一份脚本会多出一列 GPU 和加速比。
 
 装 CUDA 版 torch（注意：Python 3.8 最高只能到 torch 2.4.1，不支持 RTX 5070 的 sm_120，
-所以要用 3.13）：
-    D:\\Programming\\Python_dir_3133\\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu128
+所以要用 3.13）。本机已装好：`torch 2.15.0+cu132`，下面两个解释器都可用
+（它们共用同一份用户级 site-packages）：
+    D:\\Program Files\\Python3133\\python.exe
+    D:\\Programming\\Python_dir_3133\\python.exe
 
 用法：
-    python gpu_probe.py
-    python gpu_probe.py --quick      # 少测几组，30 秒出结果
+    & "D:\\Program Files\\Python3133\\python.exe" gpu_probe.py
+    & "D:\\Program Files\\Python3133\\python.exe" gpu_probe.py --quick   # 少测几组，30 秒
 """
 
 import argparse
