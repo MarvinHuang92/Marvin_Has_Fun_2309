@@ -16,9 +16,13 @@
     存档   -> 每局结束自动写 game_log/replays/*.json（一轮一个快照）
     回放   -> 「回放…」按钮载入存档，逐回合前后翻
 
-对手类型：随机 / 手写启发式 / 搜索型 / 混合型（hybrid）。混合型需要
-`model_searchc_25k400_ts.pth`，会自动切到 teacher_scores 特征。
-两类 rollout 次数可用环境变量调：NIMMT_SEARCH_M（默认 8）、NIMMT_HYBRID_M（默认 24）。
+对手等级（界面只显示等级，不出现内部名字）：
+    Lv0 随机        = simple_ai
+    Lv1 手写启发式  = advanced_ai
+    Lv2 神经网络    = scorepolicy（打分网络直接取 argmin）
+    Lv3 网络+搜索   = hybrid（网络先筛前 K 名，再对各候选做 rollout）
+Lv2 / Lv3 需要 `model_searchc_25k400_ts.pth`，会自动切到 teacher_scores 特征。
+Lv3 的 rollout 次数可用环境变量 NIMMT_HYBRID_M 调（默认 24）；提示用 NIMMT_HINT_M（默认 8）。
 实测（每局耗时 / 对随机胜率）：search M8 ≈ 28ms/89.3%，hybrid M24 ≈ 39ms/94.0%，
 search M24 ≈ 81ms/93.3%。（一局 10 回合，所以单个决策只有 3~8ms。）
 
@@ -53,22 +57,35 @@ BASE_W, BASE_H, BASE_GAP = 66, 88, 8
 CARD_COLORS = {1: "#ededed", 2: "#ffe9a8", 3: "#ffc98f", 5: "#ff9b9b", 7: "#b23a48"}
 
 OPP_TYPES = [
-    ("随机", "simple_ai"),
-    ("手写启发式 advanced_ai", "advanced_ai"),
-    ("搜索型 search", "search"),
-    ("混合型 hybrid（更强）", "hybrid"),
+    ("Lv0 随机", "simple_ai"),
+    ("Lv1 手写启发式", "advanced_ai"),
+    ("Lv2 神经网络", "scorepolicy"),
+    ("Lv3 网络+搜索", "hybrid"),
 ]
 TYPE_NAME = {v: k for k, v in OPP_TYPES}
+# 界面上只显示等级，不出现 advanced_ai 这类内部名字
+LEVEL = {
+    "simple_ai": ("Lv0", "随机"),
+    "advanced_ai": ("Lv1", "启发式"),
+    "scorepolicy": ("Lv2", "神经网络"),
+    "hybrid": ("Lv3", "网络+搜索"),
+    "search": ("Lv3", "搜索"),
+}
+def type_label(t):
+    """给内部类型名一个界面显示名（不在下拉里出现的类型也能兜底）"""
+    return TYPE_NAME.get(t) or ("%s %s" % LEVEL.get(t, ("", t))).strip()
+
+
 MODEL_TYPES = {"hybrid", "scorepolicy", "network", "policy"}
 
-# 模型路径（hybrid 用；load_model 会自动到 models/ 下找）
+# 模型路径（Lv2 / Lv3 用；load_model 会自动到 models/ 下找）
 MODEL_PATH = "model_searchc_25k400_ts.pth"
-# 各类型的 rollout 次数：search 沿用界面的 8 次（够用且快），hybrid 用 24 次
-#   —— 实测 hybrid K3M24 与 search M24 打平（48.6%），但每个决策便宜一半
-SEARCH_ROLLOUTS = int(os.environ.get("NIMMT_SEARCH_M", "8"))
+# Lv3 的算力：网络先筛前 HYBRID_TOP_K 名，每个候选做这么多次 rollout
 HYBRID_ROLLOUTS = int(os.environ.get("NIMMT_HYBRID_M", "24"))
+# 提示用的 rollout 次数（提示走的是纯搜索）
+HINT_ROLLOUTS = int(os.environ.get("NIMMT_HINT_M", "8"))
 
-HINT_LABELS = ["关闭提示", "adv_ai", "搜索型"]
+HINT_LABELS = ["关闭提示", "Lv1 启发式", "搜索"]
 HINT_MODES = ["off", "adv", "search"]
 
 REPLAY_DIR = os.path.join("game_log", "replays")
@@ -353,7 +370,8 @@ class NimmtGUI(object):
 
     def setup_dialog(self):
         if self.auto:
-            self.new_game({"n": 4, "types": ["simple_ai", "advanced_ai", "search"], "seed": 7})
+            self.new_game({"n": 5, "types": ["simple_ai", "advanced_ai", "scorepolicy", "hybrid"],
+                           "seed": 7})
             return
         dlg = tk.Toplevel(self.root)
         dlg.title("新开一局")
@@ -364,7 +382,7 @@ class NimmtGUI(object):
         n_var = tk.IntVar(value=4)
         seed_var = tk.StringVar(value="")
         # 默认在「随机 / advanced_ai / search」之间轮换（hybrid 要加载模型，让用户自己选）
-        type_vars = [tk.StringVar(value=OPP_TYPES[i % 3][1]) for i in range(9)]
+        type_vars = [tk.StringVar(value=OPP_TYPES[i % 4][1]) for i in range(9)]
 
         tk.Label(dlg, text="你是 P1，其余都是电脑", bg=BG, fg=FG,
                  font=self.font_b).grid(row=0, column=0, columnspan=3, sticky="w",
@@ -460,6 +478,7 @@ class NimmtGUI(object):
         else:
             engine.extra_feature_mode = "none"
         engine.policy_sample = False
+        engine.SEARCH_ROLLOUTS = HINT_ROLLOUTS      # 提示走纯搜索，别用 12 次那么慢
 
         for i, t in enumerate(cfg["types"]):
             p = self.players[i + 1]
@@ -469,8 +488,7 @@ class NimmtGUI(object):
                     p.NN_model = model
                 else:
                     p.intellegence = "advanced_ai"
-            p.rollout_count = (HYBRID_ROLLOUTS if p.intellegence == "hybrid"
-                               else SEARCH_ROLLOUTS)
+            p.rollout_count = HYBRID_ROLLOUTS
             p.search_depth = 0          # L1 关闭（实测截断会掉强度）
 
         self.game = engine.Game(n, 10)
@@ -504,11 +522,21 @@ class NimmtGUI(object):
         }
         self.log_clear()
         self.log_line("新局开始：%d 人（你 + %d 个电脑），种子 %s" % (n, n - 1, cfg["seed"]))
-        self.log_line("算力：search=%d 次 rollout，hybrid=%d 次（K=%d）"
-                      % (SEARCH_ROLLOUTS, HYBRID_ROLLOUTS, engine.HYBRID_TOP_K))
+        has_nn = any(t in MODEL_TYPES for t in cfg["types"])
+        if has_nn:
+            self.log_line("对手等级：Lv0 随机 / Lv1 手写启发式 / Lv2 神经网络 / Lv3 网络+搜索")
+            self.log_line("算力说明：")
+            self.log_line("  Lv2 神经网络 = 每步 1 次前向，给每张手牌打一个预期罚分，取最小")
+            self.log_line("  Lv3 网络+搜索 = 网络先筛出前 %d 名，每个候选做 %d 次 rollout"
+                          "（共 %d 次模拟）"
+                          % (engine.HYBRID_TOP_K, HYBRID_ROLLOUTS,
+                             engine.HYBRID_TOP_K * HYBRID_ROLLOUTS))
+            self.log_line("  模型：%s" % MODEL_PATH)
+        else:
+            self.log_line("对手等级：Lv0 随机 / Lv1 手写启发式（都不用模型）")
         if load_err:
             self.log_line("！模型加载失败：%s" % load_err)
-        self.log_line("对手：" + "，".join("P%d=%s" % (i + 2, TYPE_NAME[t])
+        self.log_line("对手：" + "，".join("P%d=%s" % (i + 2, type_label(t))
                                           for i, t in enumerate(cfg["types"])))
         for rnd in range(self.game.max_round):
             if not self.root.winfo_exists():
@@ -594,14 +622,14 @@ class NimmtGUI(object):
                 if mode == "adv":
                     ds = self.me.advAiCalcPlayCardReward(self.game, self.deck)
                     best = min(range(len(ds)), key=lambda i: ds[i]["reward"])
-                    self.hint_label = "adv_ai"
+                    self.hint_label = "Lv1 启发式"
                 else:
                     # searchCostsFor 会往 self.search_costs 里写，人类玩家没初始化过
                     self.me.search_costs = {}
                     costs = self.me.searchCostsFor(self.game,
                                                    list(range(len(self.me.handCards))))
                     best = costs.index(min(costs))
-                    self.hint_label = "搜索型"
+                    self.hint_label = "搜索"
         except Exception as exc:             # 提示失败不该影响游戏
             self.log_line("（提示计算失败：%s）" % exc)
         finally:
@@ -672,20 +700,41 @@ class NimmtGUI(object):
         paint_hand(self.hand_cv, self.me.handCards, self.cw, self.ch, self.gap,
                    self.f_num, self.f_mark, selected=self.pending, hint=self.hint_index)
 
+        # 罚分榜：用 grid 排三栏（玩家 / 对手 / 罚分），每栏一个控件，
+        # 这样中英文混排、字体不等宽也不会错位
         for w in self.score_box.winfo_children():
             w.destroy()
         tk.Label(self.score_box, text="罚分（越少越好）", bg=BG, fg=DIM,
-                 font=self.font).pack(anchor="w", pady=(0, 4))
+                 font=self.font).grid(row=0, column=0, columnspan=3, sticky="w",
+                                      pady=(0, 4))
+        for c, h in enumerate(("玩家", "对手", "罚分")):
+            tk.Label(self.score_box, text=h, bg=BG, fg=DIM, font=self.font,
+                     anchor=("e" if c == 2 else "w")).grid(
+                row=1, column=c, sticky=("e" if c == 2 else "w"), padx=(0, 12))
+
         best = min((p.bullheads for p in self.players), default=0)
-        for p in self.players:
+        for i, p in enumerate(self.players):
+            lead = (p.bullheads == best and self.round > 1)
+            fg = "#8bd450" if lead else FG
+            name = "%s（你）" % p.name if p is self.me else p.name
             if p is self.me:
-                label = "%s（你）" % p.name
+                lvl = "你"
             else:
-                label = "%s %s" % (p.name, TYPE_NAME.get(p.intellegence, ""))
-            fg = "#8bd450" if (p.bullheads == best and self.round > 1) else FG
-            tk.Label(self.score_box, text="%-16s %3d" % (label, p.bullheads),
-                     bg=BG, fg=fg, font=("Consolas", max(8, int(10 * self.k))),
-                     anchor="w").pack(anchor="w")
+                lv, nm = LEVEL.get(p.intellegence, ("", ""))
+                lvl = ("%s %s" % (lv, nm)).strip()
+            tk.Label(self.score_box, text=name, bg=BG, fg=fg, font=self.font,
+                     anchor="w").grid(row=2 + i, column=0, sticky="w", padx=(0, 12))
+            tk.Label(self.score_box, text=lvl, bg=BG, fg=fg, font=self.font,
+                     anchor="w").grid(row=2 + i, column=1, sticky="w", padx=(0, 12))
+            tk.Label(self.score_box, text="%d" % p.bullheads, bg=BG, fg=fg,
+                     font=(self.font[0], self.font[1], "bold"), anchor="e",
+                     width=4).grid(row=2 + i, column=2, sticky="e")
+
+        # 罚分榜宽度随名字长短变化，窗口不够就撑开（只增不减，不干扰手动缩放）
+        self.root.update_idletasks()
+        need = self.table_w + 16 + self.score_box.winfo_reqwidth() + 40
+        if need > self.root.winfo_width():
+            self.root.geometry("%dx%d" % (need, self.root.winfo_height()))
 
     # ---------------- 存档 / 回放 ----------------
     def save_record(self):
