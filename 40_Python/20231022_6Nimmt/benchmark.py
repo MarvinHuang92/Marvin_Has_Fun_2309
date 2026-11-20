@@ -29,15 +29,20 @@ CONTESTANTS = [
 
 
 def play(a, b, games):
-    """a 方对 b 方，返回 (a 胜率, 半宽, a 牛头, b 牛头)"""
+    """a 方对 b 方，返回 (a 胜率, 半宽, a 牛头, b 牛头, 局数)
+
+    置信区间按「一副牌」为单位算配对标准误 —— 同一副牌打两次，不是两个独立样本。
+    """
     name_a, type_a, model_a = a
     name_b, type_b, model_b = b
     pairs = max(1, games // 2)
     wins = 0
+    pair_wins = []
     bh_a = bh_b = 0
     with contextlib.redirect_stdout(io.StringIO()):
         for i in range(pairs):
             seed = SEED_BASE + i
+            w = 0
             for a_seat in (0, 1):
                 types = [type_a, type_b] if a_seat == 0 else [type_b, type_a]
                 paths = [model_a, model_b] if a_seat == 0 else [model_b, model_a]
@@ -45,11 +50,19 @@ def play(a, b, games):
                 bh = r["bullheads"]
                 if r["winner"] == a_seat:
                     wins += 1
+                    w += 1
                 bh_a += bh[a_seat]
                 bh_b += bh[1 - a_seat]
+            pair_wins.append(w)
     total = pairs * 2
     p = 1.0 * wins / total
-    half = 1.96 * (p * (1.0 - p) / total) ** 0.5
+    vals = [w / 2.0 for w in pair_wins]
+    m = sum(vals) / len(vals)
+    if len(vals) > 1:
+        sd = (sum((v - m) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5
+        half = 1.96 * sd / (len(vals) ** 0.5)
+    else:
+        half = 0.0
     return p, half, bh_a, bh_b, total
 
 

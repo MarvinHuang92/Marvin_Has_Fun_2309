@@ -184,6 +184,40 @@ def simulateRest(rows, my_hand, opp_hand, my_score, opp_score, first_card, deck_
     return me_score, op_score
 
 
+def simulateRestN(rows, my_hand, opp_hands, my_score, opp_scores, first_card, deck_size):
+    """N 人局的 rollout：我先出 first_card，之后我按老师规则、所有对手随机，打到局末
+
+    和 simulateRest 的区别：每回合要摆 N 张牌（不是 2 张），所以单次模拟的成本约是 2 人局的 N/2 倍。
+    返回 (我的总分, 各对手的总分列表)。
+    """
+    rows = [list(r) for r in rows]
+    my = list(my_hand)
+    opps = [list(h) for h in opp_hands]
+    me = my_score
+    ops = list(opp_scores)
+    for k in range(len(my)):
+        mine = first_card if k == 0 else myRolloutPick(rows, my, deck_size)
+        plays = [(mine, -1)]
+        picks = []
+        for i, h in enumerate(opps):
+            j = random.randrange(len(h))
+            plays.append((h[j], i))
+            picks.append(j)
+        for value, who in sorted(plays):
+            def pick(current, who=who):
+                return greedyRow(current) if who < 0 else random.randrange(len(current))
+            taken = placeCard(rows, value, pick, deck_size)
+            if who < 0:
+                me += taken
+            else:
+                ops[who] += taken
+        my.remove(mine)
+        for i, j in enumerate(picks):
+            opps[i].pop(j)
+        ROLLOUT_STEPS[0] += 1
+    return me, ops
+
+
 def simulateAfterRow(rows, my_hand, opp_hand, my_score, opp_score, played_card, target_row, deck_size):
     """我已经打出一张"全场最小"的牌、现在要挑一行吃掉时的模拟
 
@@ -621,9 +655,23 @@ class Player():
         unseen = [v for v in range(1, game.deck_size + 1)
                   if v not in played and v not in my_hand]
         opp_score = sum(p.bullheads for p in game.playerList if p is not self)
+        n_players = len(game.playerList) if game.playerList else game.players
 
         rounds = self.rolloutCount()
-        if SEARCH_CHEAT:      # 诊断：直接知道对手的真实手牌（真实对局不可能，只为量上界）
+        opp_sets = None
+        if n_players > 2:
+            # N 人局：每回合要摆 N 张牌，单次模拟成本约是 2 人局的 N/2 倍。
+            # 对手牌全从「未见过的牌」里采（不偷看），一次采够 N-1 家。
+            need = (n_players - 1) * len(my_hand)
+            opp_scores = [p.bullheads for p in game.playerList if p is not self]
+            opp_sets = []
+            for _ in range(rounds):
+                pool = random.sample(unseen, min(need, len(unseen)))
+                while len(pool) < need:            # 极少见：兜底补齐
+                    pool.append(random.choice(unseen))
+                h = len(my_hand)
+                opp_sets.append([pool[i * h:(i + 1) * h] for i in range(n_players - 1)])
+        elif SEARCH_CHEAT:      # 诊断：直接知道对手的真实手牌（真实对局不可能，只为量上界）
             true_hand = next([c.value for c in p.handCards]
                              for p in game.playerList if p is not self)
             # 对手可能已经打出本回合的牌（还没结算），那张牌确实未知 -> 从未知牌里补一张
@@ -635,19 +683,24 @@ class Player():
             opp_hands = [random.sample(unseen, len(my_hand)) for _ in range(rounds)]
         per_rollout = []
         batch = max(2, rounds // 4)
-        depth = self.rolloutDepth()
-        for opp_hand in opp_hands:
+        depth = self.rolloutDepth() if n_players <= 2 else 0   # L1 只做了 2 人版
+        for t in range(rounds):
             row = []
             for idx in candidate_indexes:
-                if depth > 0:
+                if n_players > 2:
+                    me, ops = simulateRestN(rows, my_hand, opp_sets[t], self.bullheads,
+                                            opp_scores, my_hand[idx], game.deck_size)
+                    row.append(me if SEARCH_CRITERION == "self"
+                               else me - sum(ops) / float(len(ops)))
+                elif depth > 0:
                     # L1：只推 depth 个回合，剩下的用 min_a Q(s,a) 收尾
-                    me, op, r2, h2 = simulatePartial(rows, my_hand, opp_hand, self.bullheads,
+                    me, op, r2, h2 = simulatePartial(rows, my_hand, opp_hands[t], self.bullheads,
                                                      opp_score, my_hand[idx],
                                                      game.deck_size, depth)
                     leaf = self.bootstrapValue(r2, h2, me, game.players, game.deck_size)
                     row.append(me - op + leaf)
                 else:
-                    me, op = simulateRest(rows, my_hand, opp_hand, self.bullheads, opp_score,
+                    me, op = simulateRest(rows, my_hand, opp_hands[t], self.bullheads, opp_score,
                                           my_hand[idx], game.deck_size)
                     row.append(me if SEARCH_CRITERION == "self" else me - op)
             per_rollout.append(row)
@@ -853,7 +906,8 @@ class Player():
         # 混合型玩家（第十一轮）：吃行和搜索型保持一致，好把差别只归到"出牌选择"上
         # 第十二轮：改成也搜索 —— 4 个候选行各 rollout 一遍（HYBRID_ROW_SEARCH=0 可关掉）
         elif self.intellegence == "hybrid":
-            if HYBRID_ROW_SEARCH:
+            # 吃行搜索目前只有 2 人版；多人局退回「吃牛头最少的一行」（实测这一档只值 +0.4 分）
+            if HYBRID_ROW_SEARCH and len(game.playerList) <= 2:
                 ret = self.chooseRowBySearch(game, card) + 1
             else:
                 ret = bullheads_list.index(min(bullheads_list)) + 1

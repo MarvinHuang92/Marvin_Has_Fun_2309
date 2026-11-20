@@ -707,7 +707,7 @@ class NimmtGUI(object):
         tk.Label(self.score_box, text="罚分（越少越好）", bg=BG, fg=DIM,
                  font=self.font).grid(row=0, column=0, columnspan=3, sticky="w",
                                       pady=(0, 4))
-        for c, h in enumerate(("玩家", "对手", "罚分")):
+        for c, h in enumerate(("玩家", "类型", "罚分")):
             tk.Label(self.score_box, text=h, bg=BG, fg=DIM, font=self.font,
                      anchor=("e" if c == 2 else "w")).grid(
                 row=1, column=c, sticky=("e" if c == 2 else "w"), padx=(0, 12))

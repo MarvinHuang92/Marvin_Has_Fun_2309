@@ -101,12 +101,14 @@ def main():
 
     pairs = max(1, games // 2)
     wins = 0
+    pair_wins = []          # 每副牌的胜场数（0/1/2）——同一副牌打了两次，不能当独立样本
     bullheads_a = 0
     bullheads_b = 0
 
     with contextlib.redirect_stdout(io.StringIO()):    # 对局打印太多，整体吞掉
         for i in range(pairs):
             seed = seed_base + i
+            w = 0
             for a_seat in (0, 1):
                 types = [player_type, opponent] if a_seat == 0 else [opponent, player_type]
                 if opp_model:
@@ -118,12 +120,22 @@ def main():
                 bullheads = result["bullheads"]
                 if result["winner"] == a_seat:
                     wins += 1
+                    w += 1
                 bullheads_a += bullheads[a_seat]
                 bullheads_b += bullheads[1 - a_seat]
+            pair_wins.append(w)
 
     total = pairs * 2
     p = 1.0 * wins / total
-    half = 1.96 * (p * (1.0 - p) / total) ** 0.5
+    # 配对标准误：以「一副牌」为单位，而不是以「一局」为单位
+    vals = [w / 2.0 for w in pair_wins]
+    m = sum(vals) / len(vals)
+    if len(vals) > 1:
+        sd = (sum((v - m) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5
+        se = sd / (len(vals) ** 0.5)
+    else:
+        se = 0.0
+    half = 1.96 * se
     print("模型 A   : %s  [%s]" % (model_path, player_type))
     if opp_model:
         print("模型 B   : %s  [%s]   <- 双方都是模型" % (opp_model, opponent))

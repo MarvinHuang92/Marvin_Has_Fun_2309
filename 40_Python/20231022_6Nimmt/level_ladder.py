@@ -116,15 +116,25 @@ def main():
         if (g + 1) % 100 == 0:
             print("  ... %d/%d 局（%.0fs）" % (g + 1, n_games, time.time() - t0), file=sys.stderr)
 
+    def mean_ci(vals):
+        n = len(vals)
+        m = sum(vals) / n
+        if n < 2:
+            return m, 0.0
+        sd = (sum((v - m) ** 2 for v in vals) / (n - 1)) ** 0.5
+        return m, 1.96 * sd / (n ** 0.5)
+
     print("5 人局 × %d 局（每局座位轮换），用时 %.0fs" % (n_games, time.time() - t0))
     print()
-    print("  %-20s %8s %8s %8s %8s" % ("策略", "平均罚分", "平均名次", "第一", "最后"))
+    print("  %-20s %15s %15s %12s" % ("策略", "平均罚分", "平均名次", "拿第一"))
     for s in STRATS:
         st = stats[s]
         n = len(st["pts"])
-        print("  %-20s %8.2f %8.2f %7.1f%% %7.1f%%" % (
-            LABEL[s], sum(st["pts"]) / n, sum(st["rank"]) / n,
-            100.0 * st["first"] / n, 100.0 * st["last"] / n))
+        pts, ci = mean_ci(st["pts"])
+        rk, _ = mean_ci(st["rank"])
+        fw, fci = mean_ci([1.0 if r == 1 else 0.0 for r in st["rank"]])
+        print("  %-20s %8.2f±%.2f %8.2f±%.2f %8.1f±%.1f%%" % (
+            LABEL[s], pts, ci, rk, _, 100 * fw, 100 * fci))
     print()
 
     hp = stats["human"]["pts"]
