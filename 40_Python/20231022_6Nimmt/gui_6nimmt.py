@@ -11,20 +11,27 @@
     出牌   -> canvas 点击，wait_variable
     吃行   -> 弹窗选行，wait_window
 
-尺寸会按屏幕可用空间等比缩放（高分屏 150% 缩放时窗口会放不下）。
+额外功能：
+    提示   -> 下拉框选「关闭 / adv_ai / 搜索型」，在状态栏和手牌上标出推荐
+    存档   -> 每局结束自动写 game_log/replays/*.json（一轮一个快照）
+    回放   -> 「回放…」按钮载入存档，逐回合前后翻
+
+尺寸会按真实 DPI 和屏幕可用空间等比缩放（高分屏 200% 缩放时不这么做会超出屏幕）。
 
 用法：
     python gui_6nimmt.py            # 正常玩
-    python gui_6nimmt.py --selftest # 自动跑一局（用随机手牌代打），验证流程
+    python gui_6nimmt.py --selftest # 自动跑一局（第一张手牌代打），验证流程
 """
 
 import contextlib
 import io
+import json
 import os
 import random
 import sys
+import time
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, ttk
 
 import game_6nimmt as engine
 
@@ -34,9 +41,9 @@ PANEL = "#1e1e1e"
 FG = "#eaeaea"
 DIM = "#8a8a8a"
 GOLD = "#ffd54f"
+HINT = "#4fc3f7"
 BASE_W, BASE_H, BASE_GAP = 66, 88, 8
 
-# 牛头数 -> 卡面底色
 CARD_COLORS = {1: "#ededed", 2: "#ffe9a8", 3: "#ffc98f", 5: "#ff9b9b", 7: "#b23a48"}
 
 OPP_TYPES = [
@@ -45,6 +52,11 @@ OPP_TYPES = [
     ("搜索型 search", "search"),
 ]
 TYPE_NAME = {v: k for k, v in OPP_TYPES}
+
+HINT_LABELS = ["关闭提示", "adv_ai", "搜索型"]
+HINT_MODES = ["off", "adv", "search"]
+
+REPLAY_DIR = os.path.join("game_log", "replays")
 
 
 @contextlib.contextmanager
@@ -73,24 +85,127 @@ def enable_dpi_awareness():
         pass
 
 
-def draw_card(cv, x, y, card, w, h, f_num, f_mark, selected=False, dim=False):
+# ---------------- 画牌 ----------------
+def draw_card(cv, x, y, card, w, h, f_num, f_mark, selected=False, hint=False):
     bh = card.bullheads
     fill = CARD_COLORS.get(bh, "#ededed")
-    if dim:
-        fill = "#8f8f8f"
     tcol = "#ffffff" if bh >= 7 else "#1a1a1a"
-    cv.create_rectangle(x, y, x + w, y + h, fill=fill,
-                        outline=GOLD if selected else "#1a1a1a",
-                        width=3 if selected else 1)
+    if selected:
+        outline, width = GOLD, 3
+    elif hint:
+        outline, width = HINT, 3
+    else:
+        outline, width = "#1a1a1a", 1
+    cv.create_rectangle(x, y, x + w, y + h, fill=fill, outline=outline, width=width)
     cv.create_text(x + w / 2, y + h * 0.31, text=str(card.value), fill=tcol, font=f_num)
     marks = "●" * min(bh, 5) + ("+%d" % (bh - 5) if bh > 5 else "")
     cv.create_text(x + w / 2, y + h * 0.71, text=marks, fill=tcol, font=f_mark)
+    if hint and not selected:
+        cv.create_polygon(x + w / 2 - 6, y - 7, x + w / 2 + 6, y - 7, x + w / 2, y - 1,
+                          fill=HINT, outline="")
 
 
 def draw_slot(cv, x, y, w, h):
     cv.create_rectangle(x, y, x + w, y + h, outline="#4a4a4a", dash=(3, 4))
 
 
+def paint_table(cv, rows, cw, ch, gap, f_num, f_mark):
+    cv.delete("all")
+    for r in range(4):
+        row = rows[r] if r < len(rows) else []
+        y = gap + r * (ch + gap)
+        for c in range(5):
+            x = gap + c * (cw + gap)
+            if c < len(row) and row[c] is not None:
+                draw_card(cv, x, y, row[c], cw, ch, f_num, f_mark)
+            else:
+                draw_slot(cv, x, y, cw, ch)
+
+
+def paint_hand(cv, hand, cw, ch, gap, f_num, f_mark, selected=None, hint=None):
+    cv.delete("all")
+    for i, card in enumerate(hand):
+        draw_card(cv, gap + i * (cw + gap), gap, card, cw, ch, f_num, f_mark,
+                  selected=(i == selected), hint=(i == hint))
+    for i in range(len(hand), 10):
+        draw_slot(cv, gap + i * (cw + gap), gap, cw, ch)
+
+
+# ---------------- 回放窗口 ----------------
+class ReplayWindow(tk.Toplevel):
+    def __init__(self, master, app, data):
+        tk.Toplevel.__init__(self, master)
+        self.app = app
+        self.data = data
+        self.rounds = data.get("rounds", [])
+        self.idx = 0
+        self.title("回放 —— %s" % data.get("created", ""))
+        self.configure(bg=BG)
+        self.transient(master)
+
+        top = tk.Frame(self, bg=BG)
+        top.pack(fill="x", padx=10, pady=(10, 0))
+        self.table_cv = tk.Canvas(top, width=app.table_w, height=app.table_h,
+                                  bg=PANEL, highlightthickness=0)
+        self.table_cv.pack(side="left")
+        side = tk.Frame(top, bg=BG)
+        side.pack(side="left", padx=(14, 0), anchor="n", fill="y")
+        self.info = tk.Label(side, text="", bg=BG, fg=GOLD, font=app.font_b,
+                             justify="left", anchor="nw", wraplength=int(260 * app.k))
+        self.info.pack(anchor="w")
+        self.score_lbl = tk.Label(side, text="", bg=BG, fg=FG, font=app.log_font,
+                                  justify="left", anchor="nw")
+        self.score_lbl.pack(anchor="w", pady=(8, 0))
+
+        tk.Label(self, text="你（P1）的手牌", bg=BG, fg=DIM,
+                 font=app.font).pack(anchor="w", padx=10, pady=(8, 2))
+        self.hand_cv = tk.Canvas(self, width=app.hand_w, height=app.ch + app.gap,
+                                 bg=PANEL, highlightthickness=0)
+        self.hand_cv.pack(fill="x", padx=10)
+
+        bar = tk.Frame(self, bg=BG)
+        bar.pack(fill="x", padx=10, pady=10)
+        tk.Button(bar, text="<< 上一回合", font=app.font,
+                  command=self.prev).pack(side="left")
+        tk.Button(bar, text="下一回合 >>", font=app.font,
+                  command=self.next).pack(side="left", padx=8)
+        tk.Button(bar, text="关闭", font=app.font,
+                  command=self.destroy).pack(side="left")
+        self.show(0)
+
+    # 0 = 开局，k = 第 k 回合结束后
+    def show(self, k):
+        k = max(0, min(k, len(self.rounds)))
+        self.idx = k
+        if k == 0:
+            snap = self.data["initial"]
+            title = "开局"
+            played = ""
+        else:
+            snap = self.rounds[k - 1]
+            title = "第 %d 回合结束" % snap["round"]
+            played = "本轮出牌：" + "，".join(
+                "%s=%d" % (x["name"], x["card"]) for x in snap.get("played", []))
+        rows = [[engine.Card(v) for v in row] for row in snap["table"]]
+        paint_table(self.table_cv, rows, self.app.cw, self.app.ch, self.app.gap,
+                    self.app.f_num, self.app.f_mark)
+        hand = [engine.Card(v) for v in snap["hands"][0]]
+        paint_hand(self.hand_cv, hand, self.app.cw, self.app.ch, self.app.gap,
+                   self.app.f_num, self.app.f_mark)
+        names = self.data.get("players", [])
+        self.info.configure(text="%s\n%s\n（%d/%d）" % (title, played, k, len(self.rounds)))
+        self.score_lbl.configure(text="\n".join(
+            "%-14s %3d" % (names[i]["name"] if i < len(names) else "P%d" % (i + 1), s)
+            for i, s in enumerate(snap["scores"])))
+
+    def prev(self):
+        self.show(self.idx - 1)
+
+    def next(self):
+        self.show(self.idx + 1)
+
+
+# ---------------- 主窗口 ----------------
 class NimmtGUI(object):
     def __init__(self, root, auto=False):
         self.root = root
@@ -100,7 +215,12 @@ class NimmtGUI(object):
         self.players = []
         self.round = 0
         self.pending = None
+        self.waiting = False
         self.busy = False
+        self.hint_index = None
+        self.hint_label = ""
+        self.record = None
+        self.last_saved = None
         self.card_var = tk.IntVar(value=0)
         self._setup_scale()
         root.title("6 Nimmt! 牛头牌")
@@ -138,9 +258,9 @@ class NimmtGUI(object):
         self.table_w = 5 * (cw + gap) + gap
         self.table_h = 4 * (ch + gap) + gap
         self.hand_w = 10 * (cw + gap) + gap
-        self.win_w = max(self.hand_w, self.table_w + int(280 * self.k)) + 44
+        self.win_w = max(self.hand_w, self.table_w + int(300 * self.k)) + 44
         self.win_h = 20 + self.table_h + int(30 * self.k) + (ch + gap) + int(30 * self.k) \
-            + max(140, int(180 * self.k)) + int(40 * self.k)
+            + max(140, int(180 * self.k)) + int(46 * self.k)
 
     # ---------------- 界面骨架 ----------------
     def _build_ui(self):
@@ -168,9 +288,8 @@ class NimmtGUI(object):
 
         logf = tk.Frame(outer, bg=BG)
         logf.pack(fill="both", expand=True)
-        self.log = tk.Text(logf, height=6, bg=PANEL, fg=FG,
-                           font=self.log_font, insertbackground=FG, relief="flat",
-                           wrap="word")
+        self.log = tk.Text(logf, height=6, bg=PANEL, fg=FG, font=self.log_font,
+                           insertbackground=FG, relief="flat", wrap="word")
         sb = tk.Scrollbar(logf, command=self.log.yview)
         self.log.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
@@ -180,8 +299,20 @@ class NimmtGUI(object):
         btns.pack(fill="x", pady=(6, 0))
         tk.Button(btns, text="新开一局", font=self.font,
                   command=self.on_new_game).pack(side="left")
+        tk.Button(btns, text="保存本局", font=self.font,
+                  command=self.save_record).pack(side="left", padx=(8, 0))
+        tk.Button(btns, text="回放…", font=self.font,
+                  command=self.open_replay).pack(side="left", padx=(8, 0))
         tk.Button(btns, text="退出", font=self.font,
-                  command=self.root.destroy).pack(side="left", padx=8)
+                  command=self.root.destroy).pack(side="left", padx=(8, 0))
+
+        tk.Label(btns, text="提示：", bg=BG, fg=FG, font=self.font).pack(
+            side="left", padx=(20, 2))
+        self.hint_combo = ttk.Combobox(btns, values=HINT_LABELS, state="readonly",
+                                       width=10, font=self.font)
+        self.hint_combo.current(0)
+        self.hint_combo.pack(side="left")
+        self.hint_combo.bind("<<ComboboxSelected>>", self._on_hint_change)
 
     # ---------------- 日志 ----------------
     def log_line(self, text):
@@ -322,6 +453,15 @@ class NimmtGUI(object):
 
         self.round = 0
         self.pending = None
+        self.hint_index = None
+        self.record = {
+            "version": 1,
+            "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "config": cfg,
+            "players": [{"name": p.name, "type": p.intellegence} for p in self.players],
+            "initial": self._snapshot(),
+            "rounds": [],
+        }
         self.log_clear()
         self.log_line("新局开始：%d 人（你 + %d 个电脑），种子 %s" % (n, n - 1, cfg["seed"]))
         self.log_line("对手：" + "，".join("P%d=%s" % (i + 2, TYPE_NAME[t])
@@ -332,17 +472,31 @@ class NimmtGUI(object):
             self.play_round(rnd)
         self.finish()
 
+    def _snapshot(self):
+        return {
+            "table": [[c.value for c in row if c] for row in self.game.table],
+            "hands": [[c.value for c in p.handCards] for p in self.players],
+            "scores": [p.bullheads for p in self.players],
+        }
+
     # ---------------- 一回合 ----------------
     def play_round(self, rnd):
         self.round = rnd + 1
         self.game.left_round = self.game.max_round - 1 - rnd
         self.game.stash = []
-        self.status("第 %d/10 回合 —— 点一张手牌" % self.round)
+        self.compute_hint()
         self.refresh()
+        if self.hint_index is not None:
+            self.status("第 %d/10 回合 —— 点一张手牌　　提示（%s）：%d 号牌"
+                        % (self.round, self.hint_label,
+                           self.me.handCards[self.hint_index].value))
+        else:
+            self.status("第 %d/10 回合 —— 点一张手牌" % self.round)
 
         idx = self.ask_card()
         card = self.me.handCards.pop(idx)
         self.game.stash.append({"player": self.me, "card": card})
+        self.hint_index = None
 
         self.status("对手出牌中…")
         with quiet():
@@ -350,9 +504,11 @@ class NimmtGUI(object):
                 if p is not self.me:
                     p.playCard(self.game, self.deck)
 
-        played = "，".join("%s=%d" % (it["player"].name, it["card"].value)
-                           for it in self.game.stash)
-        self.log_line("第 %2d 回合出牌：%s" % (self.round, played))
+        played_rows = [{"seat": self.players.index(it["player"]),
+                        "name": it["player"].name,
+                        "card": it["card"].value} for it in self.game.stash]
+        self.log_line("第 %2d 回合出牌：%s" % (
+            self.round, "，".join("%s=%d" % (x["name"], x["card"]) for x in played_rows)))
 
         with quiet():
             self.game.arrangeCard()          # 人类要选行时会在这里弹窗
@@ -363,7 +519,53 @@ class NimmtGUI(object):
 
         for p in self.players:
             self.log_line("        %s 累计牛头 %d" % (p.name, p.bullheads))
+        snap = self._snapshot()
+        snap["round"] = self.round
+        snap["played"] = played_rows
+        self.record["rounds"].append(snap)
         self.refresh()
+
+    # ---------------- 提示 ----------------
+    def _on_hint_change(self, _ev=None):
+        if self.waiting:                     # 正等着我出牌，立刻重算
+            self.compute_hint()
+            self.refresh()
+            if self.hint_index is not None:
+                self.status("第 %d/10 回合 —— 点一张手牌　　提示（%s）：%d 号牌"
+                            % (self.round, self.hint_label,
+                               self.me.handCards[self.hint_index].value))
+            else:
+                self.status("第 %d/10 回合 —— 点一张手牌" % self.round)
+
+    def compute_hint(self):
+        self.hint_index = None
+        self.hint_label = ""
+        mode = HINT_MODES[self.hint_combo.current()]
+        if mode == "off" or not self.me or not self.me.handCards:
+            return
+        state = random.getstate()            # 提示要跑 rollout，别扰动牌局本身的随机数
+        best = None
+        try:
+            with quiet():
+                if mode == "adv":
+                    ds = self.me.advAiCalcPlayCardReward(self.game, self.deck)
+                    best = min(range(len(ds)), key=lambda i: ds[i]["reward"])
+                    self.hint_label = "adv_ai"
+                else:
+                    # searchCostsFor 会往 self.search_costs 里写，人类玩家没初始化过
+                    self.me.search_costs = {}
+                    costs = self.me.searchCostsFor(self.game,
+                                                   list(range(len(self.me.handCards))))
+                    best = costs.index(min(costs))
+                    self.hint_label = "搜索型"
+        except Exception as exc:             # 提示失败不该影响游戏
+            self.log_line("（提示计算失败：%s）" % exc)
+        finally:
+            random.setstate(state)
+        if best is not None and 0 <= best < len(self.me.handCards):
+            self.hint_index = best
+            self.log_line("        提示（%s）：建议出 %d"
+                          % (self.hint_label, self.me.handCards[best].value))
 
     # ---------------- 人类交互 ----------------
     def ask_card(self):
@@ -371,7 +573,9 @@ class NimmtGUI(object):
             return 0
         self.pending = None
         self.card_var.set(0)
+        self.waiting = True
         self.root.wait_variable(self.card_var)
+        self.waiting = False
         idx = self.pending
         self.pending = None
         return idx
@@ -417,30 +621,12 @@ class NimmtGUI(object):
 
     # ---------------- 绘制 ----------------
     def refresh(self):
-        cv = self.table_cv
-        cv.delete("all")
         if not self.game:
             return
-        for r, row in enumerate(self.game.table):
-            y = self.gap + r * (self.ch + self.gap)
-            for c in range(5):
-                x = self.gap + c * (self.cw + self.gap)
-                if row[c]:
-                    draw_card(cv, x, y, row[c], self.cw, self.ch,
-                              self.f_num, self.f_mark)
-                else:
-                    draw_slot(cv, x, y, self.cw, self.ch)
-
-        hv = self.hand_cv
-        hv.delete("all")
-        if self.me:
-            for i, card in enumerate(self.me.handCards):
-                x = self.gap + i * (self.cw + self.gap)
-                draw_card(hv, x, self.gap, card, self.cw, self.ch,
-                          self.f_num, self.f_mark, selected=(i == self.pending))
-            for i in range(len(self.me.handCards), 10):
-                draw_slot(hv, self.gap + i * (self.cw + self.gap), self.gap,
-                          self.cw, self.ch)
+        paint_table(self.table_cv, self.game.table, self.cw, self.ch, self.gap,
+                    self.f_num, self.f_mark)
+        paint_hand(self.hand_cv, self.me.handCards, self.cw, self.ch, self.gap,
+                   self.f_num, self.f_mark, selected=self.pending, hint=self.hint_index)
 
         for w in self.score_box.winfo_children():
             w.destroy()
@@ -457,6 +643,38 @@ class NimmtGUI(object):
                      bg=BG, fg=fg, font=("Consolas", max(8, int(10 * self.k))),
                      anchor="w").pack(anchor="w")
 
+    # ---------------- 存档 / 回放 ----------------
+    def save_record(self):
+        if not self.record or not self.record["rounds"]:
+            self.log_line("（还没打完一回合，没有可保存的内容）")
+            return None
+        try:
+            os.makedirs(REPLAY_DIR, exist_ok=True)
+            fn = os.path.join(REPLAY_DIR, "nimmt_%s_seed%s.json" % (
+                time.strftime("%Y%m%d_%H%M%S"), self.record["config"]["seed"]))
+            with open(fn, "w", encoding="utf-8") as f:
+                json.dump(self.record, f, ensure_ascii=False, indent=1)
+            self.last_saved = fn
+            self.log_line("对局已保存：%s" % fn)
+            return fn
+        except Exception as exc:
+            self.log_line("（保存失败：%s）" % exc)
+            return None
+
+    def open_replay(self):
+        os.makedirs(REPLAY_DIR, exist_ok=True)
+        fn = filedialog.askopenfilename(
+            parent=self.root, title="选择对局存档", initialdir=REPLAY_DIR,
+            filetypes=[("对局存档", "*.json"), ("所有文件", "*.*")])
+        if not fn:
+            return
+        try:
+            with open(fn, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            ReplayWindow(self.root, self, data)
+        except Exception as exc:
+            self.log_line("（读取存档失败：%s）" % exc)
+
     # ---------------- 收尾 ----------------
     def finish(self):
         ranked = sorted(self.players, key=lambda p: p.bullheads)
@@ -471,6 +689,11 @@ class NimmtGUI(object):
             self.status("你排第 %d（%d 个牛头）" % (
                 ranked.index(self.me) + 1, self.me.bullheads))
         self.refresh()
+        self.record["final"] = {
+            "scores": [p.bullheads for p in self.players],
+            "ranking": [p.name for p in ranked],
+        }
+        self.save_record()
         if self.auto:
             print("selftest 完成：%s" % "，".join(
                 "%s(%s)=%d" % (p.name, p.intellegence, p.bullheads) for p in self.players))
