@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
-"""在 5 人局里配对比较两个模型
+"""在 5 人局里配对比较两个模型（或两套搜索参数）
 
 同一局里 A、B 同时上桌（座位轮换、对手一样、牌局一样），所以是**配对比较**，
 比"各打各的副本"灵敏得多。
 
 用法：
-    python mp_validate.py model_a.pth model_b.pth [局数]
+    python mp_validate.py model_a.pth model_b.pth [局数] [--mode hybrid|scorepolicy]
+    # 搜索参数也可以各给各的：
+    python mp_validate.py model_a.pth model_b.pth 800 --a-m 24 --b-m 48
+    python mp_validate.py model_a.pth model_b.pth 800 --a-k 3 --b-k 6
+    python mp_validate.py model_a.pth model_b.pth 800 --a-crit diff --b-crit max
 """
 
+import argparse
 import contextlib
 import io
 import random
@@ -26,7 +31,7 @@ def make_smallest(p):
     return choose
 
 
-def play_one(roster, models, seed, mode="hybrid"):
+def play_one(roster, models, params, seed, mode="hybrid"):
     players = [g.Player("P%d" % (i + 1)) for i in range(N)]
     game = g.Game(N, 10)
     game.playerList = players
@@ -50,9 +55,13 @@ def play_one(roster, models, seed, mode="hybrid"):
             p.chooseCardToPlay = make_smallest(p)
             p.chooseRowWhenSmallest = lambda gp, c: 1
         elif t in ("A", "B"):
-            p.intellegence = mode          # hybrid（网络剪枝+搜索）或 scorepolicy（纯网络）
+            p.intellegence = mode          # hybrid（剪枝+搜索）或 scorepolicy（纯网络）
             p.NN_model = models[t]
-            p.rollout_count = 24
+            p.rollout_count = params[t]["m"]
+            p.hybrid_k = params[t]["k"]
+            p.search_criterion = params[t]["crit"]
+            p.opp_teacher = (params[t]["opp"] == "teacher")
+            p.screen_m = params[t]["screen"]
             p.search_depth = 0
         else:
             p.intellegence = t
@@ -79,38 +88,53 @@ def mean_ci(vals):
 
 
 def main():
-    path_a = sys.argv[1] if len(sys.argv) > 1 else "model_a.pth"
-    path_b = sys.argv[2] if len(sys.argv) > 2 else "model_b.pth"
-    games = int(sys.argv[3]) if len(sys.argv) > 3 else 400
-    mode = sys.argv[4] if len(sys.argv) > 4 else "hybrid"
+    ap = argparse.ArgumentParser()
+    ap.add_argument("model_a")
+    ap.add_argument("model_b")
+    ap.add_argument("games", nargs="?", type=int, default=400)
+    ap.add_argument("--mode", default="hybrid")
+    ap.add_argument("--a-m", type=int, default=24)
+    ap.add_argument("--b-m", type=int, default=24)
+    ap.add_argument("--a-k", type=int, default=3)
+    ap.add_argument("--b-k", type=int, default=3)
+    ap.add_argument("--a-crit", default="diff")
+    ap.add_argument("--b-crit", default="diff")
+    ap.add_argument("--a-opp", default="random")   # rollout 里对手的出牌策略
+    ap.add_argument("--b-opp", default="random")
+    ap.add_argument("--a-screen", type=int, default=0)   # 两阶段粗筛次数（0=关闭）
+    ap.add_argument("--b-screen", type=int, default=0)
+    args = ap.parse_args()
 
     g.extra_feature_mode = "teacher_scores"
     g.normalize_state = False
     g.policy_sample = False
-    g.HYBRID_TOP_K = 3
-    g.SEARCH_ROLLOUTS = 8
     with contextlib.redirect_stdout(io.StringIO()):
-        models = {"A": g.load_model(path_a), "B": g.load_model(path_b)}
+        models = {"A": g.load_model(args.model_a), "B": g.load_model(args.model_b)}
+    params = {
+        "A": {"m": args.a_m, "k": args.a_k, "crit": args.a_crit, "opp": args.a_opp,
+              "screen": args.a_screen},
+        "B": {"m": args.b_m, "k": args.b_k, "crit": args.b_crit, "opp": args.b_opp,
+              "screen": args.b_screen},
+    }
 
     a_pts, b_pts, diffs, a_first, b_first = [], [], [], 0, 0
     t0 = time.time()
     with contextlib.redirect_stdout(io.StringIO()):
-        for i in range(games):
+        for i in range(args.games):
             off = i % N
             roster = BASE[off:] + BASE[:off]
-            bull = play_one(roster, models, 960000 + i, mode)
+            bull = play_one(roster, models, params, 960000 + i, args.mode)
             ia, ib = roster.index("A"), roster.index("B")
             pa, pb = bull[ia], bull[ib]
             a_pts.append(pa)
             b_pts.append(pb)
             diffs.append(pa - pb)
-            # 谁是全场最少？
             if pa == min(bull):
                 a_first += 1
             if pb == min(bull):
                 b_first += 1
-            if (i + 1) % 100 == 0:
-                print("  ... %d/%d 局（%.0fs）" % (i + 1, games, time.time() - t0),
+            if (i + 1) % 200 == 0:
+                print("  ... %d/%d 局（%.0fs）" % (i + 1, args.games, time.time() - t0),
                       file=sys.stderr)
 
     ma, ca = mean_ci(a_pts)
@@ -118,14 +142,17 @@ def main():
     md, cd = mean_ci(diffs)
     wins = sum(1 for d in diffs if d < 0)
     ties = sum(1 for d in diffs if d == 0)
-    print("5 人局配对比较（%s）：A=%s  B=%s  （%d 局，座位轮换）"
-          % (mode, path_a, path_b, games))
+    print("5 人局配对比较（%s，%d 局）" % (args.mode, args.games))
+    print("  A: %s  m=%d k=%d crit=%s opp=%s screen=%d"
+          % (args.model_a, args.a_m, args.a_k, args.a_crit, args.a_opp, args.a_screen))
+    print("  B: %s  m=%d k=%d crit=%s opp=%s screen=%d"
+          % (args.model_b, args.b_m, args.b_k, args.b_crit, args.b_opp, args.b_screen))
     print("  A 平均罚分 %6.2f ±%.2f      B 平均罚分 %6.2f ±%.2f" % (ma, ca, mb, cb))
     print("  配对差 (A−B) %+.2f ±%.2f   -> %s" % (
         md, cd, "A 更好" if md + cd < 0 else ("B 更好" if md - cd > 0 else "打平（区间跨 0）")))
     print("  逐局胜负：A 赢 %d、平 %d、B 赢 %d（%.1f%% / %.1f%%）"
-          % (wins, ties, games - wins - ties,
-             100.0 * wins / games, 100.0 * (games - wins - ties) / games))
+          % (wins, ties, args.games - wins - ties,
+             100.0 * wins / args.games, 100.0 * (args.games - wins - ties) / args.games))
     print("  拿全场第一的次数：A %d、B %d" % (a_first, b_first))
     return 0
 

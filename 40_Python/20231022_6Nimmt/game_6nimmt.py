@@ -31,6 +31,12 @@ SEARCH_CHEAT = os.environ.get("SEARCH_CHEAT", "0") not in ("0", "false")
 # 设 TEACHER_DIVISOR=104 可以完全复现旧行为 —— 用来评估按旧分母训练的模型。
 TEACHER_USE_DECK = os.environ.get("TEACHER_DIVISOR", "deck").lower() != "104"
 
+# rollout 里对手的出牌策略：random（默认，对 Lv0 是对的）/ teacher（对强手更接近真实）
+OPP_TEACHER = os.environ.get("ROLLOUT_OPP", "random").lower() == "teacher"
+
+# 两阶段搜索的粗筛次数：>0 时先用这么多次 rollout 给全部手牌粗排，再对前 K 名深算
+SCREEN_M = int(os.environ.get("HYBRID_SCREEN_M", "0"))
+
 
 def teacherDivisor(deck_size):
     return float(deck_size) if TEACHER_USE_DECK else 104.0
@@ -194,9 +200,12 @@ def simulateRest(rows, my_hand, opp_hand, my_score, opp_score, first_card, deck_
     return me_score, op_score
 
 
-def simulateRestN(rows, my_hand, opp_hands, my_score, opp_scores, first_card, deck_size):
-    """N 人局的 rollout：我先出 first_card，之后我按老师规则、所有对手随机，打到局末
+def simulateRestN(rows, my_hand, opp_hands, my_score, opp_scores, first_card, deck_size,
+                  opp_teacher=False):
+    """N 人局的 rollout：我先出 first_card，之后我按老师规则、对手按 opp_teacher 出牌，打到局末
 
+    opp_teacher=False（默认）：对手随机出牌 —— 对 Lv0 是正确的模型
+    opp_teacher=True：对手也按老师规则出牌 —— 对 Lv1/Lv3/人类更接近真实
     和 simulateRest 的区别：每回合要摆 N 张牌（不是 2 张），所以单次模拟的成本约是 2 人局的 N/2 倍。
     返回 (我的总分, 各对手的总分列表)。
     """
@@ -213,7 +222,11 @@ def simulateRestN(rows, my_hand, opp_hands, my_score, opp_scores, first_card, de
         plays = [(mine, -1)]
         picks = []
         for i, h in enumerate(opps):
-            j = random.randrange(len(h))
+            if opp_teacher:
+                best = myRolloutPick(rows, h, deck_size)
+                j = h.index(best) if best in h else random.randrange(len(h))
+            else:
+                j = random.randrange(len(h))
             plays.append((h[j], i))
             picks.append(j)
         for value, who in sorted(plays):
@@ -263,7 +276,7 @@ def simulateAfterRow(rows, my_hand, opp_hand, my_score, opp_score, played_card, 
 
 
 def simulateAfterRowN(rows, my_hand, pending_cards, opp_future_hands, my_score, opp_scores,
-                      played_card, target_row, deck_size):
+                      played_card, target_row, deck_size, opp_teacher=False):
     """N 人局版：我打出全场最小、现在挑一行吃掉
 
     顺序按规则：我先吃掉 target_row（我的牌成为该行第一张），
@@ -275,7 +288,8 @@ def simulateAfterRowN(rows, my_hand, pending_cards, opp_future_hands, my_score, 
     rows[target_row] = [played_card]
     for v in sorted(pending_cards):
         placeCard(rows, v, lambda r: random.randrange(len(r)), deck_size)
-    return simulateRestN(rows, my_hand, opp_future_hands, me, opp_scores, None, deck_size)
+    return simulateRestN(rows, my_hand, opp_future_hands, me, opp_scores, None, deck_size,
+                         opp_teacher=opp_teacher)
 
 
 # ---------------- L1：截断 rollout + 价值头 ----------------
@@ -635,6 +649,36 @@ class Player():
         n = getattr(self, "rollout_count", None)
         return SEARCH_ROLLOUTS if n is None else int(n)
 
+    # 这个座位剪枝留几个候选：优先实例上的 hybrid_k，否则用全局
+    def hybridK(self):
+        n = getattr(self, "hybrid_k", None)
+        return HYBRID_TOP_K if n is None else int(n)
+
+    # 这个座位的评价准则：优先实例上的 criterion，否则用全局
+    #   diff = 我 − 各对手平均（默认）；max = 我 − 最强的对手；self = 只看我自己
+    def criterion(self):
+        return getattr(self, "search_criterion", None) or SEARCH_CRITERION
+
+    # rollout 里的对手是否按老师规则出牌
+    def oppTeacher(self):
+        v = getattr(self, "opp_teacher", None)
+        return OPP_TEACHER if v is None else bool(v)
+
+    # 两阶段搜索的粗筛次数（0 = 不用两阶段）
+    def screenM(self):
+        n = getattr(self, "screen_m", None)
+        return SCREEN_M if n is None else int(n)
+
+    # 把 rollout 结果折成一个"越小越好"的代价
+    # 2 人局时 ops 只有一个元素，diff 和 max 都退化成 me - op，和老代码完全等价
+    def criterionCost(self, me, ops):
+        mode = self.criterion()
+        if mode == "self" or not ops:
+            return me
+        if mode == "max":
+            return me - max(ops)
+        return me - sum(ops) / float(len(ops))
+
     # L1：本局的 rollout 截断深度。返回 0 表示不截断
     #   优先用实例上的 search_depth（对照实验里两个座位可以不同），否则用全局 HYBRID_DEPTH。
     #   只有「带模型 + diff 准则 + teacher_scores 特征」时才能 bootstrap，
@@ -678,7 +722,7 @@ class Player():
     # 搜索型玩家（第九轮）：对给定候选动作做 SEARCH_ROLLOUTS 次 rollout，返回每个候选的平均代价
     # 注意：对手手牌是隐藏信息，这里从「未见过的牌」里随机采样一副，而不是偷看真实手牌
     # 公共随机数：同一批对手手牌喂给所有候选动作，动作之间的差值才可比、噪声才小
-    def searchCostsFor(self, game, candidate_indexes):
+    def searchCostsFor(self, game, candidate_indexes, rounds=None):
         rows = [[c.value for c in row if c] for row in game.table]
         my_hand = [c.value for c in self.handCards]
         played = set(game.played_cards)
@@ -687,7 +731,7 @@ class Player():
         opp_score = sum(p.bullheads for p in game.playerList if p is not self)
         n_players = len(game.playerList) if game.playerList else game.players
 
-        rounds = self.rolloutCount()
+        rounds = rounds or self.rolloutCount()
         opp_sets = None
         if n_players > 2:
             # N 人局：每回合要摆 N 张牌，单次模拟成本约是 2 人局的 N/2 倍。
@@ -719,9 +763,9 @@ class Player():
             for idx in candidate_indexes:
                 if n_players > 2:
                     me, ops = simulateRestN(rows, my_hand, opp_sets[t], self.bullheads,
-                                            opp_scores, my_hand[idx], game.deck_size)
-                    row.append(me if SEARCH_CRITERION == "self"
-                               else me - sum(ops) / float(len(ops)))
+                                            opp_scores, my_hand[idx], game.deck_size,
+                                            opp_teacher=self.oppTeacher())
+                    row.append(self.criterionCost(me, ops))
                 elif depth > 0:
                     # L1：只推 depth 个回合，剩下的用 min_a Q(s,a) 收尾
                     me, op, r2, h2 = simulatePartial(rows, my_hand, opp_hands[t], self.bullheads,
@@ -732,7 +776,7 @@ class Player():
                 else:
                     me, op = simulateRest(rows, my_hand, opp_hands[t], self.bullheads, opp_score,
                                           my_hand[idx], game.deck_size)
-                    row.append(me if SEARCH_CRITERION == "self" else me - op)
+                    row.append(self.criterionCost(me, [op]))
             per_rollout.append(row)
             # 自适应预算：小批跑完就能分出胜负就不再浪费 rollout
             if (SEARCH_EARLY_STOP and len(candidate_indexes) > 1 and len(per_rollout) >= 2 * batch
@@ -766,7 +810,15 @@ class Player():
         legal = list(range(len(self.handCards)))
         scores = self.scorePolicyScores(self.NN_data_0, legal)
         ranked = [a for _, a in sorted(zip(scores, legal))]
-        candidates = ranked[:max(1, HYBRID_TOP_K)]
+        k = max(1, self.hybridK())
+        if self.screenM() > 0 and len(legal) > k:
+            # 两阶段：先用便宜 rollout 给全部手牌粗排（网络排序偶尔会漏掉最优牌），
+            # 再只对粗排前 k 名做深算
+            coarse = self.searchCostsFor(game, legal, rounds=self.screenM())
+            order = sorted(range(len(legal)), key=lambda i: coarse[i])
+            candidates = [legal[i] for i in order[:k]]
+        else:
+            candidates = ranked[:k]
         costs = self.searchCostsFor(game, candidates)
         if HYBRID_BLEND > 0 and len(candidates) > 1:
             # 网络先验 + rollout 代价的收缩混合：rollout 只有几十次采样，噪声不小，
@@ -807,9 +859,8 @@ class Player():
                 for S in hand_sets:
                     me, ops = simulateAfterRowN(rows, my_hand, pending, S, self.bullheads,
                                                 opp_scores, card.value, target,
-                                                game.deck_size)
-                    total += (me if SEARCH_CRITERION == "self"
-                              else me - sum(ops) / float(len(ops)))
+                                                game.deck_size, self.oppTeacher())
+                    total += self.criterionCost(me, ops)
                 costs.append(total / float(rounds))
             return costs.index(min(costs))
 
@@ -826,7 +877,7 @@ class Player():
             for opp_hand in opp_hands:
                 me, op = simulateAfterRow(rows, my_hand, opp_hand, self.bullheads, opp_score,
                                           card.value, target, game.deck_size)
-                total += me if SEARCH_CRITERION == "self" else me - op
+                total += self.criterionCost(me, [op])
             costs.append(total / float(rounds))
         return costs.index(min(costs))
 
