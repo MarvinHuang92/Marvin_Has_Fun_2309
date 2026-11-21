@@ -101,6 +101,18 @@ def main() -> int:
     print("  [5] 知道底牌后池子 %d 张（少了 %d 张）✓" % (len(pool2), len(pool) - len(pool2)))
     assert len(pool2) == len(pool) - len(known), "扣掉底牌后的池子张数不对"
 
+    # 6) 底牌记忆只在"真的埋了"时才记录（提示算出的不算）
+    from tractor.ai_heuristic import HeuristicAI
+
+    ai = HeuristicAI()
+    ai.begin_deal(game)
+    ai._ensure(game, seat)
+    suggested = ai.bury(game, seat)
+    assert not ai._my_buried.get(seat), "只算了一下埋底就记成自己埋的了"
+    ai.note_buried(seat, suggested)
+    assert ai._my_buried.get(seat) == list(suggested), "真的埋了却没记住"
+    print("  [6] 底牌记忆只在提交后记录 ✓")
+
     print("-" * 62)
     print("全部通过")
     return 0

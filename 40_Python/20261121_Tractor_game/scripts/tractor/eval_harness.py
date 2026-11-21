@@ -202,6 +202,16 @@ def _submit(game: TractorGame, seat: int, cards: Sequence) -> bool:
     raise RuntimeError("座位 %d 找不到任何合法出牌（引擎状态可能不一致）" % seat)
 
 
+def _note_buried(pol: Policy, seat: int, cards) -> None:
+    """把"这一手埋底是我埋的"告诉策略（只有真的提交了才调）。
+
+    策略不一定是启发式（rule 没有记牌器），所以用鸭子类型。
+    """
+    ai = getattr(pol, "ai", None)
+    if ai is not None and hasattr(ai, "note_buried"):
+        ai.note_buried(seat, cards)
+
+
 def play_deal(seed: int, p0: Policy, p1: Policy, max_steps: int = 20000) -> TractorGame:
     """打一局（从 3 打起、单局、不跨局升级）。"""
     game = TractorGame(seed)
@@ -218,7 +228,10 @@ def play_deal(seed: int, p0: Policy, p1: Policy, max_steps: int = 20000) -> Trac
         if phase in ("bid_initial", "bid_extra"):
             game.submit_bid(seat, pol.bid(game, seat))
         elif phase in ("bury_initial", "bury_extra"):
-            game.submit_bury(seat, pol.bury(game, seat))
+            buried = pol.bury(game, seat)
+            ok, _ = game.submit_bury(seat, buried)
+            if ok:
+                _note_buried(pol, seat, buried)
         elif phase == "play":
             cards = pol.play(game, seat)
             lead_before = game.trick.lead if game.trick else None

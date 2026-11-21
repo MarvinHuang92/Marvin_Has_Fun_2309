@@ -703,14 +703,17 @@ class TractorApp:
         g = self.game
         try:
             if g.phase == "play" and g.current_player == 0:
-                cards = choose_play(g, 0)
+                # 提示用**当前选中的电脑强度**算，而不是固定最弱的规则 AI
+                cards = self.ai_engine.play(g, 0)
                 if cards:
                     self.selected = set(cards)
                     self.refresh()
+                    self._message("提示（%s）：已选中建议出的牌。"
+                                  % LEVEL_NAMES[self.ai_engine.kind])
                 else:
                     self._message("没有找到可出的牌。")
             elif g.phase in ("bury_initial", "bury_extra") and g.pending_bury_by == 0:
-                cards = choose_bury(g, 0)
+                cards = self.ai_engine.bury(g, 0)
                 if cards:
                     self.selected = set(cards)
                     self.refresh()
@@ -825,7 +828,9 @@ class TractorApp:
                 seat = g.pending_bury_by
                 cards = self.ai_engine.bury(g, seat)
                 ok, msg = g.submit_bury(seat, cards)
-                if not ok:
+                if ok:
+                    self.ai_engine.note_buried(seat, cards)
+                else:
                     self.logger.warning("AI bury rejected: %s", msg)
                     pool = g.hands[seat] + g.bottom
                     ok, msg = g.submit_bury(seat, pool[:8])

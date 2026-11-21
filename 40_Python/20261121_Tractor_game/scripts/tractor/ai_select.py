@@ -74,6 +74,10 @@ class AiEngine:
             return rule_ai.choose_bury(game, seat)
         return self._brain.bury(game, seat)
 
+    def note_buried(self, seat: int, cards) -> None:
+        if self._brain is not None:
+            self._brain.note_buried(seat, cards)
+
     def play(self, game: TractorGame, seat: int) -> List[Card]:
         if self._brain is None:
             return rule_ai.choose_play(game, seat)

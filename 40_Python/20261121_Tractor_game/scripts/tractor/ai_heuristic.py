@@ -178,9 +178,15 @@ class HeuristicAI:
         rest.sort(key=lambda c: (keep(c), c.suit, c.rank))
         chosen.extend(rest[: max(0, 8 - len(chosen))])
         chosen = chosen[:8]
-        # 记住"我埋了什么" —— 只有最后埋底的人才知道最终底牌
-        self._my_buried[seat] = list(chosen)
         return chosen
+
+    def note_buried(self, seat: int, cards) -> None:
+        """**真的把牌埋下去了**才调用（提示算法算出的不算）。
+
+        只有最后埋底的人才知道最终底牌；如果把"提示建议的埋法"也记成自己埋的，
+        AI 就会错误地以为自己知道底牌。
+        """
+        self._my_buried[seat] = list(cards)
 
     def sync_bottom(self, st: FastState, seat: int) -> None:
         """把"我是否知道底牌"同步给记牌器。
