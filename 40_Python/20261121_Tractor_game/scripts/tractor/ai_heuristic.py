@@ -39,9 +39,17 @@ class HeuristicAI:
 
     name = "heuristic"
 
-    def __init__(self, rng: Optional[random.Random] = None, verbose: bool = False) -> None:
+    def __init__(self, rng: Optional[random.Random] = None, verbose: bool = False,
+                 opts: Optional[dict] = None) -> None:
         self.rng = rng or random.Random(20261121)
         self.verbose = verbose
+        # 中前盘的开关（默认全关 = 旧行为，便于 A/B 对照）
+        self.opts = {
+            "bury_void": False,      # 埋底时整门埋掉、造缺门
+            "lead_master": False,    # 领出时优先兑现确定最大牌、避开被毙
+        }
+        if opts:
+            self.opts.update(opts)
         self.tracker: Optional[CardTracker] = None
         self._deal_key: Optional[Tuple] = None
 
@@ -126,9 +134,29 @@ class HeuristicAI:
                 v += 18                       # 成对留着
             return v
 
-        # 埋掉"保留价值最低"的 8 张；同分时优先埋长门里的孤张（顺便造缺门）
-        scored = sorted(pool, key=lambda c: (keep(c), c.suit, c.rank))
-        return scored[:8]
+        chosen: List[Card] = []
+        if self.opts.get("bury_void"):
+            # 造缺门：找一门最短的副牌，如果整门都能埋掉（<=8 张、无分牌、无主），
+            # 就整门埋掉 —— 之后这门就能用主牌毙，是拖拉机最值钱的打法之一
+            shortest = None
+            for suit in ("S", "H", "C", "D"):
+                if suit == trump:
+                    continue
+                cards = [c for c in pool
+                         if c.suit == suit and not is_trump(c, level, trump)]
+                if not cards or _points(cards) > 0:
+                    continue
+                if any(len(groups[(c.suit, c.rank)]) >= 2 and c.rank >= 11 for c in cards):
+                    continue
+                if shortest is None or len(cards) < len(shortest):
+                    shortest = cards
+            if shortest is not None and len(shortest) <= 8:
+                chosen = list(shortest)
+
+        rest = [c for c in pool if c not in chosen]
+        rest.sort(key=lambda c: (keep(c), c.suit, c.rank))
+        chosen.extend(rest[: max(0, 8 - len(chosen))])
+        return chosen[:8]
 
     # ------------------------------------------------------------------ 出牌
     def play(self, game: TractorGame, seat: int) -> List[Card]:
@@ -182,7 +210,35 @@ class HeuristicAI:
         # 确定最大的牌给额外奖励（兑现）
         if self._is_master(st, cards, tr):
             val += 25.0
+        if self.opts.get("lead_master") and st.lead is None:
+            val += self._lead_adjust(st, seat, cards, tr)
         return val
+
+    def _lead_adjust(self, st: FastState, seat: int, cards: Sequence[Card],
+                     tr: CardTracker) -> float:
+        """领出专用修正（1 层评估对领出几乎无效，必须单独给信号）。
+
+        - 领出确定最大的牌（能兑现分数）→ 加分
+        - 领出会被对手毙掉的副牌 → 扣分
+        - 领出分牌而自己又不是最大 → 扣分（白送）
+        """
+        from .cards import is_trump
+
+        kind = "T"
+        for c in cards:
+            if not is_trump(c, st.level, st.trump_suit):
+                kind = c.suit
+                break
+        attackers = [s for s in range(4) if st.team(s) != st.team(seat)]
+        adj = 0.0
+        if self._is_master(st, cards, tr):
+            adj += 30.0 + _points(cards) * 4.0        # 兑现：越大越赚
+        else:
+            if kind != "T" and tr.can_be_ruffed(kind, attackers):
+                adj -= 20.0                            # 会被毙
+            if _points(cards) > 0:
+                adj -= 6.0 * _points(cards)            # 分牌送人
+        return adj
 
     def _cost(self, st: FastState, cards: Sequence[Card]) -> float:
         """打掉这些牌的代价：牌力越高越贵，主牌更贵。"""

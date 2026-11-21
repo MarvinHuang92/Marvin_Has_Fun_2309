@@ -354,6 +354,8 @@ class TractorApp:
             self._reset_tracks()
             self.track_deal_no = g.deal_no
 
+        self._update_track_buttons()
+
         for seat in (1, 2, 3):
             panel = self.ai_panels[seat]
             role = "庄家" if seat == g.zhuang else "闲家"
@@ -598,6 +600,28 @@ class TractorApp:
             self.track_state[key] = False
         for btn in self.track_buttons.values():
             btn.configure(font=self.track_font, bg="#f0f0f0")
+
+    TRACK_SYMBOLS = {"S": "♠", "H": "♥", "C": "♣", "D": "♦", "T": "主"}
+
+    def _update_track_buttons(self) -> None:
+        """主牌花色确定后（且不是无主），把该花色那个按钮显示成"主"，并隐藏单独的"主"按钮。
+
+        这些按钮只是给人做标记用的、系统不参与判断，所以只是**显示**变化：
+        标记状态仍按原来的按钮记录，下一局随 `_reset_tracks()` 一起清空。
+        无主（`trump_suit is None`）时保持 5 个按钮不变。
+        """
+        trump = self.game.trump_suit if self.game else None
+        for (seat, group, key), btn in self.track_buttons.items():
+            if trump is not None and key == "T":
+                btn.grid_remove()
+                continue
+            if trump is not None and key == trump:
+                btn.configure(text="主",
+                              fg=CARD_RED if trump in ("H", "D") else CARD_BLACK)
+            else:
+                btn.configure(text=self.TRACK_SYMBOLS.get(key, key),
+                              fg=CARD_RED if key in ("H", "D") else CARD_BLACK)
+            btn.grid()
 
     # --------------------------------------------------------------- actions
     def on_card(self, card: Card) -> None:

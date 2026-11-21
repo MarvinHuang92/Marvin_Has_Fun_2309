@@ -43,12 +43,20 @@ def _move_key(mv: Sequence[Card]) -> Tuple:
 # ---------------------------------------------------------------------------
 
 def unseen_pool(state: FastState, seat: int) -> List[Card]:
-    """轮到 `seat` 时，所有"没见过也不在我手里"的牌（三家手牌 + 底牌）。"""
+    """轮到 `seat` 时，所有"没见过也不在我手里"的牌（三家手牌 + 底牌）。
+
+    关键：底牌必须留在池子里。从 AI 的视角，"另外 83 张"里有 75 张在对手手上、
+    8 张是底牌，但**它不知道哪 8 张**。所以正确做法是从 83 张里随机分 75 张给三家，
+    剩下 8 张自然成为"这个世界的底牌"。
+
+    （早期版本把底牌算进了"已出牌"，等于告诉 AI 哪 8 张不在对手手上 —— 那是偷看。）
+    """
     all_ids = {(c.suit, c.rank, c.copy) for c in make_deck()}
     mine = {(c.suit, c.rank, c.copy) for c in state.hands[seat]}
     remaining = {(c.suit, c.rank, c.copy) for s in range(4) for c in state.hands[s]}
     table = {(c.suit, c.rank, c.copy) for _, cs in state.plays for c in cs}
-    played = all_ids - remaining - table
+    bottom = {(c.suit, c.rank, c.copy) for c in state.bottom}
+    played = all_ids - remaining - table - bottom      # 真正打出过的牌（公开信息）
     pool = all_ids - played - mine - table
     return [Card(*cid) for cid in pool]
 

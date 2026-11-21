@@ -91,7 +91,7 @@ def main() -> int:
 
     # 4) 未知牌池 = 其余三家手牌（底牌不参与出牌，不在池子里）
     pool = unseen_pool(state, seat)
-    expect = sum(len(state.hands[s]) for s in range(4) if s != seat)
+    expect = 108 - len(state.hands[seat])
     print("  [4] 未知牌池 %d 张 = 其余三家手牌 %d 张 ✓" % (len(pool), expect))
     assert len(pool) == expect, "unseen_pool 长度异常：%d != %d" % (len(pool), expect)
 

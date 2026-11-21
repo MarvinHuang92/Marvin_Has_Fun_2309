@@ -69,12 +69,12 @@ class RulePolicy(Policy):
 
 
 class HeuristicPolicy(Policy):
-    """包装新的启发式 AI（`ai_heuristic.py`）。"""
+    """包装启发式 AI（`ai_heuristic.py`）。`opts` 控制中前盘的各个开关。"""
 
-    def __init__(self, name: str = "heuristic", seed: int = 20261121):
+    def __init__(self, name: str = "heuristic", seed: int = 20261121, opts=None):
         from .ai_heuristic import HeuristicAI
 
-        self.ai = HeuristicAI(rng=random.Random(seed))
+        self.ai = HeuristicAI(rng=random.Random(seed), opts=opts)
         self.name = name
 
     def begin_deal(self, game):
@@ -315,22 +315,33 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--time-b", type=float, default=None, help="B 方的时间预算（默认同 --time）")
     ap.add_argument("--samples", type=int, default=4, help="PIMC 采样的世界数（A 方）")
     ap.add_argument("--samples-b", type=int, default=None, help="B 方的世界数")
+    ap.add_argument("--a-opts", default="", help="A 方启发式开关，如 bury_void=1,lead_master=1")
+    ap.add_argument("--b-opts", default="", help="B 方启发式开关")
     args = ap.parse_args(argv)
     t_b = args.time if args.time_b is None else args.time_b
     s_b = args.samples if args.samples_b is None else args.samples_b
 
-    def make(name, budget, samples):
+    def parse_opts(text):
+        opts = {}
+        for part in filter(None, text.split(",")):
+            k, _, v = part.partition("=")
+            opts[k.strip()] = v.strip() not in ("0", "", "false", "False")
+        return opts
+
+    def make(name, budget, samples, opts_text=""):
         if name == "search":
             return SearchPolicy(name=name, depth=args.depth, time_limit=budget)
         if name == "pimc":
             return PIMCPolicy(name=name, depth=args.depth, time_limit=budget,
                               samples=samples)
+        if name in ("heuristic", "heuristic2"):
+            return HeuristicPolicy(name=name, opts=parse_opts(opts_text))
         return REGISTRY[name]()
 
-    pa = make(args.a, args.time, args.samples)
-    pb = make(args.b, t_b, s_b)
+    pa = make(args.a, args.time, args.samples, args.a_opts)
+    pb = make(args.b, t_b, s_b, args.b_opts)
     if args.self_check:
-        pb = make(args.a, args.time, args.samples)
+        pb = make(args.a, args.time, args.samples, args.a_opts)
 
     stats = compare(pa, pb, args.deals, args.seed)
     report(pa, pb, stats)
