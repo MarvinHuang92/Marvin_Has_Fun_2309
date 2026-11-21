@@ -1,269 +1,173 @@
-from time import sleep
-import random
-from name_list import generate_name_list
+"""电梯调度仿真 —— 入口脚本。
 
-# 定义大楼的最高，最低楼层
-MAX_FLOOR = 20
-MIN_FLOOR = 1
-# 电梯容量
-MAX_PEOPLE_IN_ELEVATOR = 8
+用法::
 
-# 2份乘客名单，每份26个人名
-name_list_1, name_list_2 = generate_name_list()
+    python elevators.py                        # 默认：2 部电梯 + LOOK，跑一遍看结果
+    python elevators.py --algo dd_group --cars 4 --seed 3
+    python elevators.py --algo look --cars 2 --trace    # 打印逐秒事件流
+    python elevators.py --list                 # 看有哪些调度算法
+    python elevators.py --check                # 自检：时间模型 + 全部算法都能跑通
+    python elevators.py --bench                # 跑分：1/2/4 部电梯 × 8 种算法
 
-# 绝对时间
-TIME = 0
+场景是固定的：20 层楼，100 人全在 1 楼，目的地 2~20 层随机，每梯 8 人。
+时间模型见 sim/model.py：1 层 4s / 2 层 6s / n≥2 层 n+4s，开关门各 2s，
+上下客每人 1s（最少 2s）。
+"""
 
-class Elevator(object):
-    m_identification = 0
-    m_floor = 1
-    m_passengers = []
-    m_passenger_num = 0
-    m_target_direction = "Up"
+from __future__ import annotations
 
-    def __init__(self, identification, floor=1):
-        self.m_identification = identification
-        self.m_floor = floor
-        # 必须初始化列表，否则多个实例会共用同一个列表
-        self.m_passengers = []
-    
-    def move_by(self, increment=1):
-        self.m_floor += increment
-        self.check_floor_range()
-    
-    def move_to(self, destination=1):
-        self.m_floor = destination
-        self.check_floor_range()
-    
-    def check_floor_range(self):
-        if self.m_floor > MAX_FLOOR:
-            self.m_floor = MAX_FLOOR
-        elif self.m_floor < MIN_FLOOR:
-            self.m_floor = MIN_FLOOR
-    
-    def show_info(self):
-        show_time()
-        self.m_passenger_num = len(self.m_passengers)
-        print("%d号电梯在%d楼，有%d名乘客，运行方向：%s" % (self.m_identification, self.m_floor, self.m_passenger_num, self.m_target_direction))
-        print("%d号电梯的乘客分别是：%s" % (self.m_identification, str(self.m_passengers)))
+import argparse
+import sys
+from pathlib import Path
+
+# 允许从任意目录 `python 40_Python/20240117_elevators/elevators.py`
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from sim.benchmark import (  # noqa: E402
+    INFO_MODELS,
+    PASSENGERS,
+    SCENARIOS,
+    make_world,
+    print_summary,
+    run_benchmark,
+    selftest,
+)
+from sim.dispatch import ALGORITHMS, ORDER  # noqa: E402
+from sim.model import CAPACITY, MIN_FLOOR  # noqa: E402
 
 
-class Passenger(object):
-    m_name = "No name"
-    m_current_floor = 1
-    m_target_floor = 1
-    m_state = "No Action"
-    m_target_direction = "Up"
-    m_in_which_elevator = 0
-
-    def __init__(self, name, current_floor, target_floor=1):
-        self.m_name = name
-        self.m_current_floor = current_floor
-        self.m_target_floor = target_floor
-        # self.check_state()
-
-    def check_state(self):
-        # 电梯内的乘客
-        if self.m_state == "In Elevator":
-            # 进入到达状态，准备离开电梯
-            if self.m_target_floor == self.m_current_floor:
-                self.m_state = "Arrived"
-        elif self.m_state == "Arrived":
-            # 已经到达，保持该状态
-            pass
-        # 电梯外的乘客
-        else:
-            # 去按电梯
-            if self.m_target_floor != self.m_current_floor:
-                self.m_state = "Wait for Elevator"
-                if self.m_target_floor > self.m_current_floor:
-                    self.m_target_direction = "Up"
-                elif self.m_target_floor < self.m_current_floor:
-                    self.m_target_direction = "Down"
-            # 什么也不做
-            else:
-                self.m_state = "No Action"
-
-    
-    def show_info(self):
-        # if self.m_state in ("In Elevator", "Arrived"):
-        #     print("乘客名字：%s，当前楼层：%d，要去楼层：%d，状态：%s (%d)" % (self.m_name, self.m_current_floor, self.m_target_floor, self.m_state, self.m_in_which_elevator))
-        # else:
-        #     print("乘客名字：%s，当前楼层：%d，要去楼层：%d，状态：%s" % (self.m_name, self.m_current_floor, self.m_target_floor, self.m_state))
-        pass
+def human(seconds: float) -> str:
+    seconds = int(round(seconds))
+    if seconds < 60:
+        return f"{seconds} 秒"
+    return f"{seconds // 60} 分 {seconds % 60:02d} 秒"
 
 
-class World(object):
-    m_elevators = []
-    m_passengers = []
-
-    def __init__(self, elevators, passengers):
-        self.m_elevators = elevators
-        self.m_passengers = passengers
-    
-    # 检查是否所有人都到了目的地
-    def check_finished(self):
-        finished = True
-        for p in self.m_passengers:
-            p.check_state()
-            if p.m_state != "No Action":
-                finished = False
-                break
-        return finished
-    
-    def run(self, first_run=False):
-        global TIME
-
-        # 读取乘客状态
+def list_algorithms() -> None:
+    print("可用的调度算法：\n")
+    for cls in ALGORITHMS:
+        print(f"  {cls.key:<10} {cls.label}")
+        print(f"  {'':<10} {cls.desc}\n")
 
 
-        # 更新电梯状态和策略（设置目标路径等）
-        # 在顶层，底层，强制电梯换向
-        for ele in self.m_elevators:
-            if ele.m_floor == MIN_FLOOR:
-                ele.m_target_direction = "Up"
-            elif ele.m_floor == MAX_FLOOR:
-                ele.m_target_direction = "Down"
-            
-            # 其他可能换向的条件
-            if Strategy_01:
-                if ele.m_target_direction == "Up":
-                    return_flag = True
-                    for p in self.m_passengers:
-                        # 电梯中的乘客，还有目的地在前方的，电梯不换向
-                        if p.m_name in ele.m_passengers and p.m_target_floor > ele.m_floor:
-                            return_flag = False
-                            break
-                        # 电梯外的乘客，有在前方等待的，或者同层等待且顺向的，电梯不换向
-                        elif p.m_state == "Wait for Elevator":
-                            if (p.m_current_floor > ele.m_floor) or \
-                                (p.m_current_floor == ele.m_floor and p.m_target_direction == "Up"):
-                                return_flag = False
-                                break
-                    # 执行换向
-                    if return_flag:
-                        ele.m_target_direction = "Down"
-                        print("%d号电梯换向，当前方向：%s" % (ele.m_identification, ele.m_target_direction))
-                
-                elif ele.m_target_direction == "Down":
-                    return_flag = True
-                    for p in self.m_passengers:
-                        # 电梯中的乘客，还有目的地在前方的，电梯不换向
-                        if p.m_name in ele.m_passengers and p.m_target_floor < ele.m_floor:
-                            return_flag = False
-                            break
-                        # 电梯外的乘客，有在前方等待的，或者同层等待且顺向的，电梯不换向
-                        elif p.m_state == "Wait for Elevator":
-                            if (p.m_current_floor < ele.m_floor) or \
-                                (p.m_current_floor == ele.m_floor and p.m_target_direction == "Down"):
-                                return_flag = False
-                                break
-                    # 执行换向
-                    if return_flag:
-                        ele.m_target_direction = "Up"
-                        print("%d号电梯换向，当前方向：%s" % (ele.m_identification, ele.m_target_direction))
-                    
-            if first_run:
-                ele.show_info()
-        
-        # 电梯开门，更新乘客状态（上下电梯等）
-        for ele in self.m_elevators:
-            # 准备上下乘客名单
-            passengers_take_on = []
-            passengers_take_off = []
-            print("")
-            for p in self.m_passengers:
-                # 更新每个乘客状态
-                p.check_state()
-                p.show_info()
-                # 让顺向等待的乘客上电梯，且电梯不可超员
-                if p.m_state == "Wait for Elevator" and \
-                        len(ele.m_passengers) < MAX_PEOPLE_IN_ELEVATOR and \
-                        p.m_current_floor == ele.m_floor and \
-                        p.m_target_direction == ele.m_target_direction:
-                    p.m_state = "In Elevator"
-                    p.m_in_which_elevator = ele.m_identification
-                    passengers_take_on.append(p.m_name)
-                    ele.m_passengers.append(p.m_name)
-                # 让到达的乘客下电梯
-                elif p.m_state == "Arrived" and p.m_in_which_elevator == ele.m_identification:
-                    p.m_state = "No Action"
-                    passengers_take_off.append(p.m_name)
-                    ele.m_passengers.remove(p.m_name)
-            print("\n%d号电梯开门，乘客上下电梯中..." % ele.m_identification)
-            if not passengers_take_on == []:
-                print("%s登上电梯" % str(passengers_take_on))
-            else: 
-                print("无人登上电梯")
-            if not passengers_take_off == []:
-                print("%s离开电梯" % str(passengers_take_off))
-            else: 
-                print("无人离开电梯")
-            print("")
+def demo(algo: str, cars: int, seed: int, passengers: int, trace: bool, verbose: bool,
+         scenario: str = "lobby") -> None:
+    world = make_world(algo, cars, seed, passengers, trace=trace, scenario=scenario)
+    dispatcher = world.dispatcher
 
-        # 更新电梯状态
+    print(f"场景：{SCENARIOS[scenario]['desc']}")
+    print(f"配置：{cars} 部电梯（初始都在 {MIN_FLOOR} 楼），每部容量 {CAPACITY} 人，"
+          f"调度算法 = {dispatcher.label}")
+    print(f"随机种子 {seed}\n")
 
-        # 电梯移动
-        for ele in self.m_elevators:
-            # 电梯移动一层
-            print("%d号电梯关门，移动中..." % ele.m_identification)
-            if ele.m_target_direction == "Up":
-                ele.move_by(1)
-            elif ele.m_target_direction == "Down":
-                ele.move_by(-1)
-            print("%d号电梯到达%d层\n" % (ele.m_identification, ele.m_floor))
+    stats = world.run(verbose=verbose)
 
-        # 到达新楼层，更新电梯状态和内部乘客状态
-        for ele in self.m_elevators:
-            # 将所有“在电梯中”的乘客楼层与电梯楼层同步
-            for p in self.m_passengers:
-                if p.m_state == "In Elevator" and p.m_in_which_elevator == ele.m_identification:
-                    p.m_current_floor = ele.m_floor
-                p.check_state()
-                # p.show_info()
+    if trace:
+        print("\n".join(world.events))
 
-        # 时间加1，并显示电梯状态
-        TIME += 1
-        for ele in self.m_elevators:
-            ele.show_info()
-        
-        print("\n===========================第%d轮循环结束===========================" % TIME)
+    print("=" * 66)
+    print(f"完成时间（最后一位乘客走出电梯）：{human(stats['makespan'])}（{stats['makespan']:.0f}s）")
+    print(f"平均候梯 {human(stats['avg_wait'])} ｜ 平均乘梯 {human(stats['avg_ride'])} "
+          f"｜ 平均总耗时 {human(stats['avg_total'])}")
+    print(f"P90 总耗时 {human(stats['p90_total'])} ｜ 最慢的乘客 {human(stats['max_total'])}")
+    print(f"停靠 {stats['stops']:.0f} 次 ｜ 运行 {stats['floors']:.0f} 层 ｜ "
+          f"开关门+上下客合计 {human(stats['door_seconds'])}")
+
+    print("-" * 66)
+    for car in world.cars:
+        delivered = sum(1 for p in world.passengers if p.car_id == car.eid)
+        print(f"{car.name}：运送 {delivered:>3} 人 ｜ 停靠 {car.stops:>3} 次 ｜ "
+              f"运行 {car.floors_travelled:>4} 层 ｜ 空等 {car.idle_seconds:>4}s")
+    print("=" * 66)
 
 
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="电梯调度仿真：100 人、20 层楼，用不同算法比较谁更快。",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--algo", default="look", choices=ORDER, help="调度算法（默认 look）")
+    parser.add_argument("--cars", type=int, default=2, help="电梯数量（默认 2）")
+    parser.add_argument("--seed", type=int, default=1, help="随机种子（默认 1）")
+    parser.add_argument("--passengers", type=int, default=None, help="乘客数量（默认按场景：100 或 200）")
+    parser.add_argument("--scenario", choices=list(SCENARIOS) + ["all"], default="lobby",
+                        help="lobby/uniform/dynamic=20 层版；lobby100/uniform100/dynamic100=100 层版；all=全跑")
+    parser.add_argument("--info", choices=["destination", "hall", "both"], default="destination",
+                        help="destination=每层 20 按钮/触摸屏；hall=只有上/下按钮；both=跑分时两种都跑")
+    parser.add_argument("--trace", action="store_true", help="打印逐秒事件流")
+    parser.add_argument("--quiet", action="store_true", help="不打印进度")
+    parser.add_argument("--list", action="store_true", help="列出所有调度算法")
+    parser.add_argument("--check", action="store_true", help="自检")
+    parser.add_argument("--bench", action="store_true", help="跑全量对比并生成报告")
+    parser.add_argument("--ladder", action="store_true",
+                        help="场景 4：容量阶梯（4 部电梯、7200s、单层候梯 >40 判超载）")
+    parser.add_argument("--duration", type=int, default=7200, help="容量阶梯的运行时长（默认 7200s）")
+    parser.add_argument("--ideal", action="store_true",
+                        help="打印理想人均交通时间的理论下限（单人、无其他乘客）")
+    parser.add_argument("--ladder100", action="store_true",
+                        help="场景 H：摩天楼容量阶梯（100 层、4 倍速、14400s、0.33~0.125 人/秒）")
+    parser.add_argument("--seeds", type=int, default=5, help="跑分时的随机种子个数（默认 5）")
+    args = parser.parse_args(argv)
 
+    if args.list:
+        list_algorithms()
+        return 0
+    if args.check:
+        selftest()
+        return 0
+    if args.ideal:
+        from sim.ideal import main as ideal_main
+        return ideal_main()
 
-def show_time():
-    print("\n当前时间：%d" % TIME)
+    if args.ladder100:
+        from sim.capacity import print_capacity100, run_capacity100_benchmark
+
+        infos = ["destination", "hall"] if args.info == "both" else [args.info]
+        for info in infos:
+            if len(infos) > 1:
+                print(f"\n=== 摩天楼容量阶梯 · {INFO_MODELS[info]['label']} ===")
+            result = run_capacity100_benchmark(
+                seeds=tuple(range(1, args.seeds + 1)),
+                info=info,
+                verbose=not args.quiet,
+            )
+            print_capacity100(result["summary"], result["rates"])
+        return 0
+
+    if args.ladder:
+        from sim.capacity import print_capacity, run_capacity_benchmark
+
+        info = "destination" if args.info == "both" else args.info
+        result = run_capacity_benchmark(
+            seeds=tuple(range(1, args.seeds + 1)),
+            duration=args.duration,
+            info=info,
+            verbose=not args.quiet,
+        )
+        print_capacity(result["main"], result["fine"], result["main_rates"], result["fine_rates"])
+        return 0
+
+    if args.bench:
+        scenarios = list(SCENARIOS) if args.scenario == "all" else [args.scenario]
+        infos = list(INFO_MODELS) if args.info == "both" else [args.info]
+        for scenario in scenarios:
+            for info in infos:
+                if len(scenarios) * len(infos) > 1:
+                    print(f"\n=== {SCENARIOS[scenario]['label']} · {INFO_MODELS[info]['label']} ===")
+                result = run_benchmark(
+                    seeds=tuple(range(1, args.seeds + 1)),
+                    passengers=args.passengers,
+                    verbose=not args.quiet,
+                    scenario=scenario,
+                    info=info,
+                )
+                print_summary(result["summary"], scenario=scenario, info=info)
+        return 0
+
+    demo(args.algo, args.cars, args.seed, args.passengers, args.trace, not args.quiet,
+         scenario=args.scenario)
+    return 0
 
 
 if __name__ == "__main__":
-    # 换向策略01
-    Strategy_01 = True
-
-    # 初始化电梯(编号，初始楼层)
-    elevators = []
-    elevators.append(Elevator(1, 1))
-    # elevators.append(Elevator(2, 6))
-    # elevators.append(Elevator(3, 11))
-    # elevators.append(Elevator(4, 16))
-
-    # 初始化乘客，不要超过52名
-    passengers = []
-    for i in range(52):
-        if i < 26:
-            name = name_list_1[i]
-        else:
-            name = name_list_2[i-26]
-        passengers.append(Passenger(name, 1, random.randint(MIN_FLOOR, MAX_FLOOR)))
-        # passengers[i].show_info()
-
-    # 将电梯和乘客加入世界
-    world = World(elevators, passengers)
-    
-    # 运行世界循环，直到所有乘客被送到目的地
-    world.run(first_run=True)
-    while True:
-        if world.check_finished():
-            break
-        else:
-            world.run()
+    raise SystemExit(main())
