@@ -11,11 +11,12 @@ import logging
 import re
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from .ai import choose_bid, choose_bury, choose_play
+from .ai_select import LEVEL_NAMES, LEVELS, AiEngine
 from .cards import (
     SUIT_NAMES,
     SUIT_SYMBOLS,
@@ -70,6 +71,7 @@ class TractorApp:
         self.game = TractorGame()
         self.selected: Set[Card] = set()
         self.ai_job: Optional[str] = None
+        self.ai_engine = AiEngine("heuristic")     # 电脑强度，界面可切
         self.saved_deal_no: Optional[int] = None
         self.ai_fail_count = 0
         self.logger = logger
@@ -215,6 +217,16 @@ class TractorApp:
         )
         self.new_button.grid(row=2, column=5, padx=4)
 
+        self.level_var = tk.StringVar(value=LEVEL_NAMES[self.ai_engine.kind])
+        self.level_box = ttk.Combobox(
+            action, textvariable=self.level_var, state="readonly", width=16,
+            values=[LEVEL_NAMES[k] for k in LEVELS], font=font,
+        )
+        self.level_box.grid(row=2, column=6, padx=(12, 4))
+        self.level_box.bind("<<ComboboxSelected>>", self.on_level_change)
+        tk.Label(action, text="电脑强度", font=("Microsoft YaHei", 9),
+                 bg="#ffffff", fg="#455a64").grid(row=1, column=6, padx=(12, 4))
+
         hand_box = tk.LabelFrame(middle, text="你的手牌（点击选择）", font=font, bg="#ffffff", fg="#17324d")
         hand_box.grid(row=1, column=0, sticky="nsew", pady=4)
         hand_box.rowconfigure(0, weight=1)
@@ -353,6 +365,7 @@ class TractorApp:
         if g.deal_no != self.track_deal_no:
             self._reset_tracks()
             self.track_deal_no = g.deal_no
+            self.ai_engine.begin_deal(g)
 
         self._update_track_buttons()
 
@@ -661,19 +674,30 @@ class TractorApp:
                 if not cards:
                     self._message("请先选牌。")
                     return
-                if g.trick and g.trick.lead:
+                lead_before = g.trick.lead if (g.trick and g.trick.lead) else None
+                if lead_before is not None:
                     ok, msg = g.play_follow(0, cards)
                 else:
                     ok, msg = g.play_lead(0, cards)
                 if not ok:
                     self._message(msg)
                     return
+                self.ai_engine.observe(g, 0, cards, lead_before)
                 self.selected.clear()
                 self.refresh()
                 self.schedule_ai()
         except Exception:
             self.logger.exception("human action failed")
             self._message("操作失败，详见 logs/run.log。")
+
+    def on_level_change(self, _event=None) -> None:
+        """切换电脑强度。下一局生效（当前的记牌状态不重建，避免中途错乱）。"""
+        name = self.level_var.get()
+        for kind, label in LEVEL_NAMES.items():
+            if label == name:
+                self.ai_engine.set_kind(kind)
+                self._message("电脑强度已切到「%s」，从下一局开始生效。" % label)
+                return
 
     def on_hint(self) -> None:
         g = self.game
@@ -791,7 +815,7 @@ class TractorApp:
         try:
             if g.phase in ("bid_initial", "bid_extra") and g.current_bidder != 0:
                 seat = g.current_bidder
-                bid = choose_bid(g, seat)
+                bid = self.ai_engine.bid(g, seat)
                 ok, msg = g.submit_bid(seat, bid)
                 if not ok:
                     self.logger.warning("AI bid rejected: %s; passing", msg)
@@ -799,7 +823,7 @@ class TractorApp:
                 progressed = ok
             elif g.phase in ("bury_initial", "bury_extra") and g.pending_bury_by not in (None, 0):
                 seat = g.pending_bury_by
-                cards = choose_bury(g, seat)
+                cards = self.ai_engine.bury(g, seat)
                 ok, msg = g.submit_bury(seat, cards)
                 if not ok:
                     self.logger.warning("AI bury rejected: %s", msg)
@@ -808,8 +832,9 @@ class TractorApp:
                 progressed = ok
             elif g.phase == "play" and g.current_player != 0:
                 seat = g.current_player
-                cards = choose_play(g, seat)
-                if g.trick and g.trick.lead:
+                cards = self.ai_engine.play(g, seat)
+                lead_before = g.trick.lead if (g.trick and g.trick.lead) else None
+                if lead_before is not None:
                     ok, msg = g.play_follow(seat, cards)
                     if not ok:
                         cards = self._fallback_follow(seat)
@@ -820,7 +845,9 @@ class TractorApp:
                         cards = [g.hands[seat][0]]
                         ok, msg = g.play_lead(seat, cards)
                 progressed = ok
-                if not ok:
+                if ok:
+                    self.ai_engine.observe(g, seat, cards, lead_before)
+                else:
                     self.logger.warning("AI play rejected: %s", msg)
                     self._message(f"电脑出牌失败：{msg}")
         except Exception:

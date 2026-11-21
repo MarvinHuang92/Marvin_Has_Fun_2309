@@ -22,6 +22,7 @@ alpha-beta 要求四家手牌全知道，而真实对局里我只知道自己那
 """
 from __future__ import annotations
 
+import os
 import random
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -32,6 +33,9 @@ from .fast_state import FastState
 from .rules import build_category
 
 INF = float("inf")
+
+# 估价是否把「本墩已经在桌上的分」算进去。默认开；设 EVAL_POT=0 可关掉做 A/B。
+EVAL_POT = os.environ.get("EVAL_POT", "1") != "0"
 
 
 def _move_key(mv: Sequence[Card]) -> Tuple:
@@ -194,6 +198,15 @@ def evaluate(state: FastState, team: int) -> float:
             score += 0.6
         if their_void and their_t > 0 and not my_void:
             score -= 0.6
+
+    # **本墩正在打的牌**：它们已经从手牌里移走，上面的三项都看不见它们。
+    # 不补这一项的话，估值在一墩打完前后会跳变（叶子落在墩中间就丢分）。
+    if EVAL_POT and state.plays:
+        pot = state.points_on_table()
+        if pot:
+            winner = state.winner_so_far()
+            mine = winner is not None and state.team(winner) == team
+            score += pot if mine else -pot
 
     return score
 

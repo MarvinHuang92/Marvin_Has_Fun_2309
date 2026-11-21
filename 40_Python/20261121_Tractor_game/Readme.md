@@ -88,6 +88,9 @@ D:\Programming\Python_dir_38\python.exe scripts\main.py
 | `scripts/tests_search_ready.py` | 自测：验证上面三个模块和引擎判罚完全一致 |
 
 ```powershell
+# 界面：跑完整一局验证电脑强度切换的接线
+python scripts\tests_ui_ai.py
+
 # 一致性自测（8 局、5470 个枚举动作、0 处不一致）
 python scripts\tests_search_ready.py
 
