@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tractor import ai as rule_ai  # noqa: E402
 from tractor.engine import TractorGame  # noqa: E402
 from tractor.fast_state import FastState  # noqa: E402
-from tractor.memory import CardTracker  # noqa: E402
+from tractor.memory import CardTracker, card_id  # noqa: E402
 from tractor.search import determinize, unseen_pool, _kind_of  # noqa: E402
 
 
@@ -92,8 +92,14 @@ def main() -> int:
     # 4) 未知牌池 = 其余三家手牌（底牌不参与出牌，不在池子里）
     pool = unseen_pool(state, seat)
     expect = 108 - len(state.hands[seat])
-    print("  [4] 未知牌池 %d 张 = 其余三家手牌 %d 张 ✓" % (len(pool), expect))
+    print("  [4] 未知牌池 %d 张 = 108 - 我的手牌（含底牌）✓" % len(pool))
     assert len(pool) == expect, "unseen_pool 长度异常：%d != %d" % (len(pool), expect)
+
+    # 5) 知道底牌时，池子应当正好少 8 张（底牌永远不会在对手手上）
+    known = list(state.bottom)
+    pool2 = unseen_pool(state, seat, known_bottom={card_id(c) for c in known})
+    print("  [5] 知道底牌后池子 %d 张（少了 %d 张）✓" % (len(pool2), len(pool) - len(pool2)))
+    assert len(pool2) == len(pool) - len(known), "扣掉底牌后的池子张数不对"
 
     print("-" * 62)
     print("全部通过")

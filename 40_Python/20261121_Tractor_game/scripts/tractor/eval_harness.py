@@ -120,8 +120,10 @@ class SearchPolicy(Policy):
     def play(self, game, seat):
         from .fast_state import FastState
 
-        return self.brain.choose(FastState.from_game(game), seat,
-                                 tracker=self.ai.tracker)
+        st = FastState.from_game(game)
+        self.ai._ensure(game, seat)
+        self.ai.sync_bottom(st, seat)
+        return self.brain.choose(st, seat, tracker=self.ai.tracker)
 
 
 class PIMCPolicy(Policy):
@@ -155,8 +157,10 @@ class PIMCPolicy(Policy):
     def play(self, game, seat):
         from .fast_state import FastState
 
-        return self.brain.choose(FastState.from_game(game), seat,
-                                 tracker=self.ai.tracker)
+        st = FastState.from_game(game)
+        self.ai._ensure(game, seat)
+        self.ai.sync_bottom(st, seat)
+        return self.brain.choose(st, seat, tracker=self.ai.tracker)
 
 
 REGISTRY = {

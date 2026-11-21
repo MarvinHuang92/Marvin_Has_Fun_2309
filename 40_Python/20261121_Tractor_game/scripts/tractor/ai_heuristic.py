@@ -49,10 +49,12 @@ class HeuristicAI:
             "lead_master": False,    # 领出时优先兑现确定最大牌、避开被毙
             "keep_pairs": False,     # 拆对子扣分（对子在拖拉机里很贵）
             "trump_void": True,      # 用「领主牌没跟」推断某人缺主牌
+            "use_bottom": True,      # 我是最后埋底的人时，用确知的底牌收紧推断
         }
         if opts:
             self.opts.update(opts)
         self.tracker: Optional[CardTracker] = None
+        self._my_buried: dict = {}       # seat -> 我埋下去的那 8 张
         self._deal_key: Optional[Tuple] = None
 
     # ------------------------------------------------------------------ 生命周期
@@ -158,7 +160,27 @@ class HeuristicAI:
         rest = [c for c in pool if c not in chosen]
         rest.sort(key=lambda c: (keep(c), c.suit, c.rank))
         chosen.extend(rest[: max(0, 8 - len(chosen))])
-        return chosen[:8]
+        chosen = chosen[:8]
+        # 记住"我埋了什么" —— 只有最后埋底的人才知道最终底牌
+        self._my_buried[seat] = list(chosen)
+        return chosen
+
+    def sync_bottom(self, st: FastState, seat: int) -> None:
+        """把"我是否知道底牌"同步给记牌器。
+
+        只有当**最后埋底的人是我**时，底牌才是确凿信息；否则一律当作不知道
+        （我可能看过更早的底牌，但已经被别人换掉了，不能用）。
+        """
+        if self.tracker is None:
+            return
+        if not self.opts.get("use_bottom", True):
+            self.tracker.known_bottom = set()
+            return
+        mine = self._my_buried.get(seat)
+        if mine and st.last_burier == seat:
+            self.tracker.set_known_bottom(mine)
+        else:
+            self.tracker.known_bottom = set()
 
     # ------------------------------------------------------------------ 出牌
     def play(self, game: TractorGame, seat: int) -> List[Card]:
@@ -168,7 +190,8 @@ class HeuristicAI:
     def choose(self, st: FastState, seat: int) -> List[Card]:
         """在给定的轻量状态上决策（评测台 / 搜索 / 双明手对账都能直接用）。"""
         tr = self.tracker or CardTracker(st.level, st.trump_suit, seat)
-        tr.my_seat = seat          # 缺门信息是公开的，视角切到当前决策者
+        tr.my_seat = seat
+        self.sync_bottom(st, seat)          # 缺门信息是公开的，视角切到当前决策者
         moves_list = moves.legal_moves(st, seat, max_moves=120)
         if not moves_list:
             return list(st.hands[seat])[:1]

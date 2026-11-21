@@ -60,6 +60,9 @@ class CardTracker:
         self.shown_suit: Dict[int, str] = {}
         self.played_cards: List[Card] = []
         self.played_by_seat: Dict[int, List[Card]] = {s: [] for s in range(4)}
+        # **我确知的底牌**（只有"最后埋底的人是我自己"时才非空）。
+        # 有了它，未见牌里就能扣掉这 8 张 → 对手的牌完全确定。
+        self.known_bottom: Set[CardId] = set()
 
     # ------------------------------------------------------------------ 观察
     def observe_hand(self, cards: Sequence[Card]) -> None:
@@ -97,14 +100,27 @@ class CardTracker:
         return kind in self.voids.get(seat, ())
 
     def unseen_ids(self) -> List[CardId]:
-        """所有还没见过、也不在我手里的牌（三家 + 底牌 + 未发出的）。"""
+        """所有还没见过、也不在我手里的牌。
+
+        如果我是最后埋底的人，`known_bottom` 里那 8 张要**扣掉** ——
+        那些牌永远不会出现在对手手上。分情况处理，是这个模块唯一"占便宜"的地方，
+        但它是**确凿的信息**，不是偷看。
+        """
         out = []
         for c in make_deck():
             cid = card_id(c)
-            if cid in self.played or cid in self.my_hand:
+            if cid in self.played or cid in self.my_hand or cid in self.known_bottom:
                 continue
             out.append(cid)
         return out
+
+    def set_known_bottom(self, cards: Sequence[Card]) -> None:
+        self.known_bottom = {card_id(c) for c in cards}
+        self.known_bottom.discard(())
+        self.known_bottom = {cid for cid in self.known_bottom if cid}
+
+    def bottom_known(self) -> bool:
+        return bool(self.known_bottom)
 
     def unseen_cards(self) -> List[Card]:
         return [Card(*cid) for cid in self.unseen_ids()]
