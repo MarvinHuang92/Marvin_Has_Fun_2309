@@ -18,8 +18,10 @@ class SearchAI:
     name = "search"
 
     def __init__(self, depth: int = 10, time_limit: float = 0.05,
-                 node_limit: int = 60000, seed: int = 20261122) -> None:
-        self.searcher = Searcher(depth=depth, time_limit=time_limit, node_limit=node_limit)
+                 node_limit: int = 60000, seed: int = 20261122,
+                 eval_kind: str = "control") -> None:
+        self.searcher = Searcher(depth=depth, time_limit=time_limit,
+                                 node_limit=node_limit, eval_kind=eval_kind)
         self.rng = random.Random(seed)
         self.stats = {"calls": 0, "nodes": 0, "time": 0.0}
 

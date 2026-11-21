@@ -37,8 +37,9 @@ class PIMCAI:
 
     def __init__(self, depth: int = 40, time_limit: float = 0.03,
                  samples: int = 4, node_limit: int = 60000,
-                 seed: int = 20261122) -> None:
-        self.searcher = Searcher(depth=depth, time_limit=time_limit, node_limit=node_limit)
+                 seed: int = 20261122, eval_kind: str = "control") -> None:
+        self.searcher = Searcher(depth=depth, time_limit=time_limit,
+                                 node_limit=node_limit, eval_kind=eval_kind)
         self.samples = max(1, samples)
         self.rng = random.Random(seed)
         self.stats = {"calls": 0, "worlds": 0, "nodes": 0}

@@ -97,12 +97,14 @@ class SearchPolicy(Policy):
     """阶段 3：亮主/埋底沿用启发式，出牌换成限深度搜索。"""
 
     def __init__(self, name: str = "search", seed: int = 20261122,
-                 depth: int = 10, time_limit: float = 0.05):
+                 depth: int = 10, time_limit: float = 0.05,
+                 eval_kind: str = "control"):
         from .ai_heuristic import HeuristicAI
         from .ai_search import SearchAI
 
         self.ai = HeuristicAI(rng=random.Random(seed))
-        self.brain = SearchAI(depth=depth, time_limit=time_limit, seed=seed)
+        self.brain = SearchAI(depth=depth, time_limit=time_limit, seed=seed,
+                              eval_kind=eval_kind)
         self.name = name
 
     def begin_deal(self, game):
@@ -133,13 +135,14 @@ class PIMCPolicy(Policy):
     """
 
     def __init__(self, name: str = "pimc", seed: int = 20261122,
-                 depth: int = 40, time_limit: float = 0.03, samples: int = 4):
+                 depth: int = 40, time_limit: float = 0.03, samples: int = 4,
+                 eval_kind: str = "control"):
         from .ai_heuristic import HeuristicAI
         from .ai_pimc import PIMCAI
 
         self.ai = HeuristicAI(rng=random.Random(seed))
         self.brain = PIMCAI(depth=depth, time_limit=time_limit,
-                            samples=samples, seed=seed)
+                            samples=samples, seed=seed, eval_kind=eval_kind)
         self.name = name
 
     def begin_deal(self, game):
@@ -319,6 +322,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--time-b", type=float, default=None, help="B 方的时间预算（默认同 --time）")
     ap.add_argument("--samples", type=int, default=4, help="PIMC 采样的世界数（A 方）")
     ap.add_argument("--samples-b", type=int, default=None, help="B 方的世界数")
+    ap.add_argument("--a-eval", default="rank", choices=["rank", "control"],
+                    help="A 方搜索用的估价模型")
+    ap.add_argument("--b-eval", default="rank", choices=["rank", "control"],
+                    help="B 方搜索用的估价模型")
     ap.add_argument("--a-opts", default="", help="A 方启发式开关，如 bury_void=1,lead_master=1")
     ap.add_argument("--b-opts", default="", help="B 方启发式开关")
     args = ap.parse_args(argv)
@@ -332,18 +339,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             opts[k.strip()] = v.strip() not in ("0", "", "false", "False")
         return opts
 
-    def make(name, budget, samples, opts_text=""):
+    def make(name, budget, samples, opts_text="", eval_kind="rank"):
         if name == "search":
-            return SearchPolicy(name=name, depth=args.depth, time_limit=budget)
+            return SearchPolicy(name=name, depth=args.depth, time_limit=budget,
+                                eval_kind=eval_kind)
         if name == "pimc":
             return PIMCPolicy(name=name, depth=args.depth, time_limit=budget,
-                              samples=samples)
+                              samples=samples, eval_kind=eval_kind)
         if name in ("heuristic", "heuristic2"):
             return HeuristicPolicy(name=name, opts=parse_opts(opts_text))
         return REGISTRY[name]()
 
-    pa = make(args.a, args.time, args.samples, args.a_opts)
-    pb = make(args.b, t_b, s_b, args.b_opts)
+    pa = make(args.a, args.time, args.samples, args.a_opts, args.a_eval)
+    pb = make(args.b, t_b, s_b, args.b_opts, args.b_eval)
     if args.self_check:
         pb = make(args.a, args.time, args.samples, args.a_opts)
 

@@ -136,23 +136,9 @@ def _categories_present(state: FastState) -> List[Tuple[str, object]]:
     return out
 
 
-def evaluate(state: FastState, team: int) -> float:
-    """中前盘估价：**从现在到局末**，`team` 的期望净得分。
-
-    三个部分：
-
-    1. **分牌归属**：按每门的"控制方"估算。持有一门最大牌的那一队，
-       大概率赢下该门的大部分墩 → 该门的 5/10/K 归它。
-    2. **牌力**：非分牌也给一点权重，反映"手里还有多少能赢的牌"。
-    3. **主牌控制 + 缺门**：主牌多的一方能把副牌毙掉；缺门的一方更可能被毙。
-
-    实现上一次扫描建好「门 → (座位, 牌)」的表，再做两轮统计。
-    早期版本对每个门都把四家手牌重扫一遍，是 profile 里的头号热点。
-
-    这是一个**截断用的近似**，不追求精确；深度够时它会被真实搜索覆盖。
-    """
+def _scan_by_kind(state: FastState):
+    """一次扫描：门 → [(座位, 牌)]，以及每队还握有哪些门。"""
     level, trump = state.level, state.trump_suit
-
     by_kind: Dict[str, List[Tuple[int, Card]]] = {}
     team_has = [set(), set()]
     for s in range(4):
@@ -161,34 +147,17 @@ def evaluate(state: FastState, team: int) -> float:
             kind = "T" if is_trump(c, level, trump) else c.suit
             by_kind.setdefault(kind, []).append((s, c))
             team_has[t].add(kind)
+    return by_kind, team_has
 
-    score = 0.0
-    trump_count = [0, 0]
-    for kind, holders in by_kind.items():
-        cat = build_category(level, trump, None if kind == "T" else kind)
-        top_power = 0
-        top_holder = holders[0][0]
-        for s, c in holders:
-            p = cat.power_of(c)
-            if p > top_power:
-                top_power, top_holder = p, s
-        controller = state.team(top_holder)
-        inv = 1.0 / (top_power + 1e-9)
-        for s, c in holders:
-            p = cat.power_of(c)
-            rel = p * inv
-            sign = 1.0 if state.team(s) == team else -1.0
-            owns = 1.0 if state.team(s) == controller else 0.0
-            score += sign * (card_points(c) * (0.72 * owns + 0.28 * rel) + 0.25 * rel)
-            if kind == "T":
-                trump_count[state.team(s)] += 1
 
-    # 主牌控制：多一张主牌大约值 0.5 分（能多毙/多控一墩）
-    my_t = trump_count[team]
-    their_t = trump_count[1 - team]
-    score += 0.5 * (my_t - their_t)
+def _tail_terms(state: FastState, team: int, by_kind, team_has) -> float:
+    """两个模型共用的尾部：主牌控制、缺门、本墩已在桌上的分。"""
+    my_t = sum(1 for s in range(4) if state.team(s) == team
+               for c in state.hands[s] if is_trump(c, state.level, state.trump_suit))
+    their_t = sum(1 for s in range(4) if state.team(s) != team
+                  for c in state.hands[s] if is_trump(c, state.level, state.trump_suit))
+    score = 0.5 * (my_t - their_t)
 
-    # 缺门：我队某门缺、且有主 → 能毙，加分；反之扣分
     for kind in by_kind:
         if kind == "T":
             continue
@@ -199,16 +168,82 @@ def evaluate(state: FastState, team: int) -> float:
         if their_void and their_t > 0 and not my_void:
             score -= 0.6
 
-    # **本墩正在打的牌**：它们已经从手牌里移走，上面的三项都看不见它们。
-    # 不补这一项的话，估值在一墩打完前后会跳变（叶子落在墩中间就丢分）。
+    # 本墩正在打的牌：它们已经离开手牌，上面所有项都看不见它们
     if EVAL_POT and state.plays:
         pot = state.points_on_table()
         if pot:
             winner = state.winner_so_far()
             mine = winner is not None and state.team(winner) == team
             score += pot if mine else -pot
-
     return score
+
+
+def _eval_control(state: FastState, team: int, by_kind, team_has) -> float:
+    """模型 A（二元控制）：谁持有该门最大牌，这门的分就归谁。"""
+    score = 0.0
+    for kind, holders in by_kind.items():
+        cat = build_category(state.level, state.trump_suit,
+                             None if kind == "T" else kind)
+        top_power = 0
+        top_holder = holders[0][0]
+        for s, c in holders:
+            p = cat.power_of(c)
+            if p > top_power:
+                top_power, top_holder = p, s
+        controller = state.team(top_holder)
+        inv = 1.0 / (top_power + 1e-9)
+        for s, c in holders:
+            rel = cat.power_of(c) * inv
+            sign = 1.0 if state.team(s) == team else -1.0
+            owns = 1.0 if state.team(s) == controller else 0.0
+            score += sign * (card_points(c) * (0.72 * owns + 0.28 * rel) + 0.25 * rel)
+    return score + _tail_terms(state, team, by_kind, team_has)
+
+
+def _eval_rank(state: FastState, team: int, by_kind, team_has) -> float:
+    """模型 B（位置/压牌数）：一张分牌能不能赢，取决于**在它上面有几张对手的牌**。
+
+    比二元控制细：一门里"我有 3 张大牌、对手有 2 张"和"我只有 1 张最大牌、
+    对手有 4 张次大"在这门里的分数归属完全不同，二元模型看不出区别。
+    """
+    score = 0.0
+    for kind, holders in by_kind.items():
+        cat = build_category(state.level, state.trump_suit,
+                             None if kind == "T" else kind)
+        order = sorted(holders, key=lambda sc: -cat.power_of(sc[1]))
+        my_above = opp_above = 0
+        for idx, (s, c) in enumerate(order):
+            mine = state.team(s) == team
+            above = opp_above if mine else my_above
+            # 上面压着 4 张对手牌基本就赢不了
+            chance = max(0.08, 1.0 - 0.25 * above)
+            rel = 1.0 / (idx + 1.0)
+            if mine:
+                score += card_points(c) * chance + 0.2 * rel
+                my_above += 1
+            else:
+                score -= card_points(c) * chance + 0.2 * rel
+                opp_above += 1
+    return score + _tail_terms(state, team, by_kind, team_has)
+
+
+def evaluate(state: FastState, team: int, kind: str = "control") -> float:
+    """中前盘估价：**从现在到局末**，`team` 的期望净得分。
+
+    两种模型通过 `kind` 选择：
+
+    - `"control"`（默认）：二元控制，谁持最大牌这门就归谁（快；实测与 rank 打平）
+    - `"rank"`：按门内牌力排序，看"压在这张上面的对手牌有几张"
+
+    两者共用主牌控制 / 缺门 / 本墩分三项。
+    这是**截断用的近似**，不追求精确；深度够时它会被真实搜索覆盖。
+    """
+    by_kind, team_has = _scan_by_kind(state)
+    if not by_kind:
+        return 0.0
+    if kind == "control":
+        return _eval_control(state, team, by_kind, team_has)
+    return _eval_rank(state, team, by_kind, team_has)
 
 
 # ---------------------------------------------------------------------------
@@ -221,12 +256,14 @@ class _Timeout(Exception):
 
 class Searcher:
     def __init__(self, depth: int = 10, time_limit: float = 0.05,
-                 node_limit: int = 60000, validate: bool = False) -> None:
+                 node_limit: int = 60000, validate: bool = False,
+                 eval_kind: str = "control") -> None:
         self.max_depth = depth
         self.time_limit = time_limit
         self.node_limit = node_limit
         # validate=True 只用于测试：核对「跳过校验」和「逐手校验」结果一致
         self.validate = validate
+        self.eval_kind = eval_kind
         self.tt: Dict[Tuple, float] = {}
         self.move_cache: Dict[Tuple, List[List[Card]]] = {}
         self.nodes = 0
@@ -298,7 +335,7 @@ class Searcher:
         if st.is_terminal():
             return 0.0
         if depth <= 0:
-            return evaluate(st, team)
+            return evaluate(st, team, self.eval_kind)
 
         key = (st.position_key(), depth)
         hit = self.tt.get(key)
