@@ -190,6 +190,15 @@ class FastState:
     def points_on_table(self) -> int:
         return sum(card_points(c) for _, cs in self.plays for c in cs)
 
+    def position_key(self) -> Tuple:
+        "置换表用的键：**不含分数**（搜索值就是从现在到局末的净得分，与已得分无关）。"
+        return (
+            self.current_player,
+            tuple(tuple(sorted(self.hands[s])) for s in range(4)),
+            self.lead.cards if self.lead else (),
+            tuple((s, tuple(sorted(cs))) for s, cs in self.plays),
+        )
+
     def key(self) -> Tuple:
         """置换表用的状态键（不含牌序，只含牌集合）。"""
         return (

@@ -132,11 +132,16 @@ class HeuristicAI:
 
     # ------------------------------------------------------------------ 出牌
     def play(self, game: TractorGame, seat: int) -> List[Card]:
-        tr = self._ensure(game, seat)
-        st = FastState.from_game(game)
+        self._ensure(game, seat)
+        return self.choose(FastState.from_game(game), seat)
+
+    def choose(self, st: FastState, seat: int) -> List[Card]:
+        """在给定的轻量状态上决策（评测台 / 搜索 / 双明手对账都能直接用）。"""
+        tr = self.tracker or CardTracker(st.level, st.trump_suit, seat)
+        tr.my_seat = seat          # 缺门信息是公开的，视角切到当前决策者
         moves_list = moves.legal_moves(st, seat, max_moves=120)
         if not moves_list:
-            return list(game.hands[seat])[:1]
+            return list(st.hands[seat])[:1]
 
         scored = [(self._score_play(st, seat, mv, tr), mv) for mv in moves_list]
         scored.sort(key=lambda x: -x[0])
