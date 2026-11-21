@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+cfg/window.json
+logs/
+data/*.json
