@@ -245,8 +245,11 @@ def mean_ci(values: Sequence[float]) -> tuple:
     return m, 1.96 * sd / math.sqrt(n)
 
 
-def deal_outcome(result: dict) -> Dict[str, object]:
-    """把 deal_result 归一化成"team0 视角"。"""
+def deal_outcome(result: dict, a_team: int = 0) -> Dict[str, object]:
+    """把 deal_result 归一化成"a_team 视角"。
+
+    `a_team` 不一定是 0：为了消掉座位顺序带来的固定偏置，评测时两局交换阵营。
+    """
     zt = result["zhuang_team"]
     side = result["side"]
     delta = result["delta"]
@@ -255,8 +258,8 @@ def deal_outcome(result: dict) -> Dict[str, object]:
         "score": result["score"],
         "zhuang_team": zt,
         "win_team": win_team,
-        "a_delta": delta if win_team == 0 else -delta,
-        "a_is_zhuang": zt == 0,
+        "a_delta": delta if win_team == a_team else -delta,
+        "a_is_zhuang": zt == a_team,
         "kind": result["kind"],
     }
 
@@ -268,10 +271,14 @@ def compare(p0: Policy, p1: Policy, deals: int, seed_base: int = 700000) -> Dict
     kinds: Dict[str, int] = {}
 
     for i in range(deals):
-        g = play_deal(seed_base + i, p0, p1)
+        # 逐局交换阵营：A 一半的局坐 team 1，抵消座位顺序的不对称
+        swap = (i % 2 == 1)
+        p_team0, p_team1 = (p1, p0) if swap else (p0, p1)
+        a_team = 1 if swap else 0
+        g = play_deal(seed_base + i, p_team0, p_team1)
         if g.deal_result is None:
             continue
-        out = deal_outcome(g.deal_result)
+        out = deal_outcome(g.deal_result, a_team)
         deltas.append(out["a_delta"])
         if out["a_is_zhuang"]:
             scores_as_dealer.append(out["score"])
@@ -333,10 +340,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     s_b = args.samples if args.samples_b is None else args.samples_b
 
     def parse_opts(text):
+        """把 "k=v,k2=v2" 解析成 dict。
+
+        注意**要保留数值类型**：早期版本把每个值都转成布尔，
+        `bid_min=32` 会变成 True，导致两个不同阈值的实验跑出完全一样的结果。
+        """
         opts = {}
         for part in filter(None, text.split(",")):
             k, _, v = part.partition("=")
-            opts[k.strip()] = v.strip() not in ("0", "", "false", "False")
+            k, v = k.strip(), v.strip()
+            if v in ("", "0", "false", "False"):
+                opts[k] = False
+                continue
+            if v in ("1", "true", "True"):
+                opts[k] = True
+                continue
+            try:
+                opts[k] = int(v)
+                continue
+            except ValueError:
+                pass
+            try:
+                opts[k] = float(v)
+                continue
+            except ValueError:
+                pass
+            opts[k] = v
         return opts
 
     def make(name, budget, samples, opts_text="", eval_kind="rank"):

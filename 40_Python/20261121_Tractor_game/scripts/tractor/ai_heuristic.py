@@ -50,6 +50,8 @@ class HeuristicAI:
             "keep_pairs": False,     # 拆对子扣分（对子在拖拉机里很贵）
             "trump_void": True,      # 用「领主牌没跟」推断某人缺主牌
             "use_bottom": True,      # 我是最后埋底的人时，用确知的底牌收紧推断
+            "bid_mode": "basic",     # basic / trump / conservative（见 _trump_strength）
+            "bid_min": 26.0,         # conservative 模式的开门门槛
         }
         if opts:
             self.opts.update(opts)
@@ -83,21 +85,35 @@ class HeuristicAI:
             return None
         hand = game.hands[seat]
         cur = game.declaration
+        mode = self.opts.get("bid_mode", "basic")
+        level = game.level
 
         def strength(b: Bid) -> float:
-            n = sum(1 for c in hand if c.suit == b.suit) if b.suit else 0
-            honors = sum(1 for c in hand if c.suit == b.suit and c.rank >= 11) if b.suit else 0
-            jokers = sum(1 for c in hand if c.is_joker)
-            points = _points(hand)
-            base = n * 1.0 + honors * 1.5 + jokers * 2.0 + points * 0.05
+            if mode == "basic":
+                n = sum(1 for c in hand if c.suit == b.suit) if b.suit else 0
+                honors = sum(1 for c in hand if c.suit == b.suit and c.rank >= 11) if b.suit else 0
+                jokers = sum(1 for c in hand if c.is_joker)
+                points = _points(hand)
+                base = n * 1.0 + honors * 1.5 + jokers * 2.0 + points * 0.05
+                if b.kind == "pair":
+                    base += 3.0
+                elif b.kind in ("nt_small", "nt_big"):
+                    base += 2.0
+                return base
+            # trump 模式：庄家真正需要的是**主牌的长度和顶上那几张**，
+            # 而不是手牌总分。手牌分（5/10/K）留在手里对庄家是中性的。
+            base = _trump_strength(hand, b.suit, level)
             if b.kind == "pair":
-                base += 3.0
+                base += 4.0
             elif b.kind in ("nt_small", "nt_big"):
                 base += 2.0
             return base
 
         if cur is None:
-            return max(bids, key=strength)
+            best = max(bids, key=strength)
+            if mode == "conservative" and strength(best) < self.opts.get("bid_min", 26.0):
+                return None                  # 手牌不够硬就先过，别硬抢庄
+            return best
         if cur.seat == seat:
             streng = [b for b in bids if b.strengthen]
             if streng:
@@ -110,7 +126,8 @@ class HeuristicAI:
             return None
         best = max(counters, key=strength)
         # 只有分数明显更强才反主，避免无谓换底
-        if strength(best) >= strength_of_bid(cur, hand) + 1.5:
+        margin = 1.5 if mode == "basic" else 3.0
+        if strength(best) >= strength_of_bid(cur, hand) + margin:
             return best
         return None
 
@@ -325,3 +342,18 @@ def strength_of_bid(bid: Bid, hand: Sequence[Card]) -> float:
     elif bid.kind in ("nt_small", "nt_big"):
         base += 2.0
     return base
+
+
+def _trump_strength(hand: Sequence[Card], suit, level: int) -> float:
+    """这手牌打 `suit` 为主时，主牌有多硬。
+
+    庄家靠的是**主牌长度 + 顶上那几张**（王/级牌/2/主 A、K），
+    不是手牌里的 5/10/K 分数 —— 那些留在手里对庄家是中性的。
+    """
+    if suit is None:
+        # 无主：只有 王 / 级牌 / 常主 2 是主
+        return sum(3.0 for c in hand if c.is_joker or c.rank in (level, 2))
+    n = sum(1 for c in hand if c.suit == suit)
+    top = sum(1 for c in hand
+              if (c.suit == suit and c.rank >= 11) or c.is_joker or c.rank in (level, 2))
+    return 2.5 * n + 3.0 * top
