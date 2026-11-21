@@ -25,6 +25,7 @@ from . import moves
 from .cards import Card, card_points, is_trump, power
 from .engine import Bid, TractorGame
 from .fast_state import FastState
+from .rules import bottom_multiplier, decompose_lead
 from .memory import CardTracker
 
 POINT_RANKS = (5, 10, 13)
@@ -50,6 +51,7 @@ class HeuristicAI:
             "keep_pairs": False,     # 拆对子扣分（对子在拖拉机里很贵）
             "trump_void": True,      # 用「领主牌没跟」推断某人缺主牌
             "use_bottom": True,      # 我是最后埋底的人时，用确知的底牌收紧推断
+            "kitty_aware": True,     # 最后一墩考虑抠底倍数（x1~x64）
             "bid_mode": "basic",     # basic / trump / conservative（见 _trump_strength）
             "bid_min": 26.0,         # conservative 模式的开门门槛
         }
@@ -260,7 +262,48 @@ class HeuristicAI:
             val += 25.0
         if self.opts.get("lead_master") and st.lead is None:
             val += self._lead_adjust(st, seat, cards, tr)
+        val += self._kitty_term(st, seat, cards, winner)
         return val
+
+    # ------------------------------------------------------------------ 抠底
+    def _kitty_term(self, st: FastState, seat: int, cards: Sequence[Card],
+                    winner: Optional[int]) -> float:
+        """最后一墩的**抠底倍数**。
+
+        规则：闲家赢下最后一墩时，底牌分 x 倍数；倍数由这一墩**领出的牌型**决定
+        （单张 x1、对子 x2、k 连对 x2^k，封顶 64）。
+
+        杠杆极大：底牌平均约 15 分，若最后一墩是 4 连对就是 15x16=240 分，
+        足以把整局翻过来。**原来的 AI 完全没考虑这件事。**
+
+        - 我队是闲家、且能赢最后一墩 -> 尽量把牌型做大（拉高倍数）
+        - 我队是庄家 -> 尽量别让闲家用大牌型赢走最后一墩
+        """
+        if not self.opts.get("kitty_aware", True):
+            return 0.0
+        if not _is_last_trick(st) or winner is None:
+            return 0.0
+
+        team = st.team(seat)
+        defender_team = 1 - st.team(st.zhuang)
+        winner_team = st.team(winner)
+
+        lead = st.lead if st.lead is not None else decompose_lead(
+            cards, st.level, st.trump_suit)
+        if lead is None:
+            return 0.0
+        mult = bottom_multiplier(lead)
+
+        if self.tracker is not None and self.tracker.known_bottom:
+            pts = float(sum(card_points(Card(*cid))
+                            for cid in self.tracker.known_bottom))
+        else:
+            pts = 15.0                       # 8 张底牌的平均分值
+
+        if winner_team != defender_team:
+            return 0.0                       # 庄家赢下最后一墩，底牌不结算给闲家
+        swing = pts * (mult - 1)             # 相对"x1"的额外收益
+        return swing if team == defender_team else -swing
 
     def _lead_adjust(self, st: FastState, seat: int, cards: Sequence[Card],
                      tr: CardTracker) -> float:
@@ -335,6 +378,16 @@ class HeuristicAI:
                 return True
             return not tr.can_be_ruffed(kind, attackers, respect_trump_void=tv)
         return False
+
+
+def _is_last_trick(st: FastState) -> bool:
+    """当前这一墩是不是全盘最后一墩。
+
+    判据：剩下要打的牌数 == 这一墩还没打的张数（张数 = 领出牌型的张数）。
+    """
+    k = len(st.lead.cards) if st.lead is not None else 1
+    remaining = sum(len(st.hands[s]) for s in range(4))
+    return remaining == k * (4 - len(st.plays))
 
 
 def strength_of_bid(bid: Bid, hand: Sequence[Card]) -> float:
