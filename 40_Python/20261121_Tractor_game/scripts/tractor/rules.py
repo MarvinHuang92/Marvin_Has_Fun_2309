@@ -8,6 +8,7 @@ against those slots.  This keeps the comparison rules in one place.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .cards import (
@@ -66,6 +67,25 @@ class Category:
     slots: Tuple[RankSlot, ...]
     level: int
     trump_suit: Optional[str]
+    # (suit, rank) -> RankSlot 的直查表。slot_of 原来是线性扫描 13~16 个槽位，
+    # 而它是一次估价的绝对热点（profile：占 49%）。建表后变成 O(1) 字典查找。
+    _index: Dict[Tuple[str, int], "RankSlot"] = field(
+        default_factory=dict, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        idx: Dict[Tuple[str, int], RankSlot] = {}
+        for s in self.slots:
+            for suit in s.suits:
+                key = (suit, s.rank)
+                if key not in idx:
+                    idx[key] = s
+        # 王没有花色，用特殊 key 进表
+        for s in self.slots:
+            if s.kind == "BJ":
+                idx[("J", 16)] = s
+            elif s.kind == "SJ":
+                idx[("J", 15)] = s
+        object.__setattr__(self, "_index", idx)
 
     @property
     def is_trump(self) -> bool:
@@ -76,22 +96,13 @@ class Category:
         return "主牌" if self.is_trump else f"{self.suit} 副牌"
 
     def slot_of(self, card: Card) -> Optional[RankSlot]:
-        if self.is_trump:
-            if not is_trump(card, self.level, self.trump_suit):
-                return None
-        else:
-            if card.suit != self.suit or is_trump(card, self.level, self.trump_suit):
-                return None
-        for s in self.slots:
-            if s.matches(card, self):
-                return s
-        return None
+        return self._index.get((card.suit, card.rank))
 
     def contains(self, card: Card) -> bool:
-        return self.slot_of(card) is not None
+        return (card.suit, card.rank) in self._index
 
     def power_of(self, card: Card) -> int:
-        slot = self.slot_of(card)
+        slot = self._index.get((card.suit, card.rank))
         return slot.power if slot else 0
 
     def slot_by_idx(self, idx: int) -> RankSlot:
@@ -102,7 +113,9 @@ def _slot(idx: int, kind: str, rank: int, label: str, suits: Tuple[str, ...]) ->
     return RankSlot(idx=idx, power=1000 - idx, label=label, kind=kind, rank=rank, suits=suits)
 
 
-def build_category(level: int, trump_suit: Optional[str], side_suit: Optional[str] = None) -> Category:
+@lru_cache(maxsize=256)
+def _build_category(level: int, trump_suit: Optional[str],
+                    side_suit: Optional[str]) -> Category:
     """Build the rank order for a side suit or for the trump category."""
     if side_suit is not None:
         slots: List[RankSlot] = []
@@ -130,6 +143,17 @@ def build_category(level: int, trump_suit: Optional[str], side_suit: Optional[st
             continue
         slots.append(_slot(len(slots), "RANK", r, rank_label(r), (trump_suit,)))
     return Category("T", None, tuple(slots), level, trump_suit)
+
+
+def build_category(level: int, trump_suit: Optional[str],
+                   side_suit: Optional[str] = None) -> Category:
+    """带缓存的入口：同一 (级牌, 主花色, 副花色) 只构表一次。
+
+    profile 显示估价函数里每个叶子都在重建 Category（占 22% 时间），
+    而参数组合只有几十种，缓存收益极大。
+    **返回的对象当只读用**（内部有一张 (suit, rank) -> RankSlot 的直查表）。
+    """
+    return _build_category(level, trump_suit, side_suit)
 
 
 # ---------------------------------------------------------------------------

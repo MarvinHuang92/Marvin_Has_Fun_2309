@@ -142,43 +142,42 @@ def evaluate(state: FastState, team: int) -> float:
     2. **牌力**：非分牌也给一点权重，反映"手里还有多少能赢的牌"。
     3. **主牌控制 + 缺门**：主牌多的一方能把副牌毙掉；缺门的一方更可能被毙。
 
+    实现上一次扫描建好「门 → (座位, 牌)」的表，再做两轮统计。
+    早期版本对每个门都把四家手牌重扫一遍，是 profile 里的头号热点。
+
     这是一个**截断用的近似**，不追求精确；深度够时它会被真实搜索覆盖。
     """
+    level, trump = state.level, state.trump_suit
+
+    by_kind: Dict[str, List[Tuple[int, Card]]] = {}
+    team_has = [set(), set()]
+    for s in range(4):
+        t = state.team(s)
+        for c in state.hands[s]:
+            kind = "T" if is_trump(c, level, trump) else c.suit
+            by_kind.setdefault(kind, []).append((s, c))
+            team_has[t].add(kind)
+
     score = 0.0
-    trump_count = {0: 0, 1: 0}
-    total_trumps = 0
-
-    for kind, cat in _categories_present(state):
-        holders: List[Tuple[int, Card]] = []
-        for s in range(4):
-            for c in state.hands[s]:
-                if cat.contains(c):
-                    holders.append((s, c))
-        if not holders:
-            continue
-        top_power = max(cat.power_of(c) for _, c in holders)
-        top_holder = next(s for s, c in holders if cat.power_of(c) == top_power)
-        controller = state.team(top_holder)
-        # 控制方是否缺门（会被对方毙）——缺门时该门的控制权打折
-        control_discount = 1.0
-        if kind != "T":
-            void_control = not any(
-                cat.contains(c) for s in range(4)
-                if state.team(s) == controller for c in state.hands[s]
-            )
-            if void_control:
-                control_discount = 0.5
-
+    trump_count = [0, 0]
+    for kind, holders in by_kind.items():
+        cat = build_category(level, trump, None if kind == "T" else kind)
+        top_power = 0
+        top_holder = holders[0][0]
         for s, c in holders:
+            p = cat.power_of(c)
+            if p > top_power:
+                top_power, top_holder = p, s
+        controller = state.team(top_holder)
+        inv = 1.0 / (top_power + 1e-9)
+        for s, c in holders:
+            p = cat.power_of(c)
+            rel = p * inv
             sign = 1.0 if state.team(s) == team else -1.0
-            rel = cat.power_of(c) / (top_power + 1e-9)      # 0..1 的相对牌力
-            owns_control = 1.0 if state.team(s) == controller else 0.0
-            win_chance = (0.72 * owns_control + 0.28 * rel) * control_discount
-            pts = card_points(c)
-            score += sign * (pts * win_chance + 0.25 * rel)
+            owns = 1.0 if state.team(s) == controller else 0.0
+            score += sign * (card_points(c) * (0.72 * owns + 0.28 * rel) + 0.25 * rel)
             if kind == "T":
                 trump_count[state.team(s)] += 1
-                total_trumps += 1
 
     # 主牌控制：多一张主牌大约值 0.5 分（能多毙/多控一墩）
     my_t = trump_count[team]
@@ -186,13 +185,11 @@ def evaluate(state: FastState, team: int) -> float:
     score += 0.5 * (my_t - their_t)
 
     # 缺门：我队某门缺、且有主 → 能毙，加分；反之扣分
-    for kind, cat in _categories_present(state):
+    for kind in by_kind:
         if kind == "T":
             continue
-        my_void = not any(cat.contains(c) for s in range(4)
-                          if state.team(s) == team for c in state.hands[s])
-        their_void = not any(cat.contains(c) for s in range(4)
-                             if state.team(s) != team for c in state.hands[s])
+        my_void = kind not in team_has[team]
+        their_void = kind not in team_has[1 - team]
         if my_void and my_t > 0 and not their_void:
             score += 0.6
         if their_void and their_t > 0 and not my_void:
@@ -211,10 +208,12 @@ class _Timeout(Exception):
 
 class Searcher:
     def __init__(self, depth: int = 10, time_limit: float = 0.05,
-                 node_limit: int = 60000) -> None:
+                 node_limit: int = 60000, validate: bool = False) -> None:
         self.max_depth = depth
         self.time_limit = time_limit
         self.node_limit = node_limit
+        # validate=True 只用于测试：核对「跳过校验」和「逐手校验」结果一致
+        self.validate = validate
         self.tt: Dict[Tuple, float] = {}
         self.move_cache: Dict[Tuple, List[List[Card]]] = {}
         self.nodes = 0
@@ -259,7 +258,7 @@ class Searcher:
         moves: Dict[Tuple, List[Card]] = {}
         for mv in cand:
             child = state.clone()
-            ok, _, res = child.play(seat, mv)
+            ok, _, res = child.play(seat, mv, validate=self.validate)
             if not ok:
                 continue
             gain = self._gain(res, team)
@@ -304,7 +303,7 @@ class Searcher:
             best = -INF
             for mv in cand:
                 child = st.clone()
-                ok, _, res = child.play(seat, mv)
+                ok, _, res = child.play(seat, mv, validate=self.validate)
                 if not ok:
                     continue
                 gain = self._gain(res, team)
@@ -318,7 +317,7 @@ class Searcher:
             best = INF
             for mv in cand:
                 child = st.clone()
-                ok, _, res = child.play(seat, mv)
+                ok, _, res = child.play(seat, mv, validate=self.validate)
                 if not ok:
                     continue
                 gain = self._gain(res, team)

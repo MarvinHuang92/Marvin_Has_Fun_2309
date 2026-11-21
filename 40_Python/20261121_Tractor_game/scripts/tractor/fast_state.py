@@ -129,8 +129,14 @@ class FastState:
             pool.remove(c)
         return True
 
-    def play(self, seat: int, cards: Sequence[Card]) -> Tuple[bool, str, Optional[TrickResult]]:
-        """出一次牌。如果这一墩凑满 4 手，会自动结算并返回 TrickResult。"""
+    def play(self, seat: int, cards: Sequence[Card],
+             validate: bool = True) -> Tuple[bool, str, Optional[TrickResult]]:
+        """出一次牌。如果这一墩凑满 4 手，会自动结算并返回 TrickResult。
+
+        `validate=False`：跳过 `is_legal_follow` 校验。**只给搜索引擎用**——
+        搜索里的动作全部来自 `moves.legal_moves*` 的合法枚举，再校验一遍是纯浪费
+        （profile 里 match_slots/is_legal_follow 占 17%）。调用方要自己保证合法。
+        """
         if seat != self.current_player:
             return False, "还没轮到他", None
         cards = list(cards)
@@ -154,9 +160,11 @@ class FastState:
 
         if len(cards) != len(self.lead.cards):
             return False, "张数不对", None
-        ok, reason = is_legal_follow(self.hands[seat], cards, self.lead, self.level, self.trump_suit)
-        if not ok:
-            return False, reason, None
+        if validate:
+            ok, reason = is_legal_follow(self.hands[seat], cards, self.lead,
+                                         self.level, self.trump_suit)
+            if not ok:
+                return False, reason, None
         for c in cards:
             self.hands[seat].remove(c)
         self.plays.append((seat, cards))
