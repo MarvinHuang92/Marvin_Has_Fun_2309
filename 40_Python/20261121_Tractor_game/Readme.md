@@ -34,6 +34,8 @@ D:\Programming\Python_dir_38\python.exe scripts\main.py
   - 不知道出什么就点“提示”，程序会选一手合法牌。
   - 多张同花色牌一起出就是“甩牌”；如果被卡，系统会自动公开“谁卡住”（不展示具体牌），并按“甩错出小”改出。
 - **下一局**：结算后点“下一局”；全场结束后点“再来一场”。
+- **电脑强度**：工具栏右侧的下拉框可切「简单（原始规则）/ 会记牌（推荐）/ 会搜索（很慢）」，**从下一局生效**。默认「会记牌」，它比原始规则强约 0.6 个升级增量/局。
+- **提示**：点「提示」会用**当前选中的电脑强度**算出建议，并自动帮你选中那几张牌。
 - **记牌/底牌信息**：左下角显示你曾看过的底牌、最后埋底者是谁、你是否知道最终底牌。
 - **牌面颜色**：所有显示牌的文字按花色着色——红桃/方块/大王为红字，黑桃/梅花/小王为黑字。
 - **手动记缺牌**：每个电脑方框右侧有“单张”和“对子/拖拉机”两组按钮（♠ ♥ ♣ ♦ 主）。这两组按钮只是给你自己做标记用，**系统完全不参与判断**。按一下加删除线，再按一下恢复；每局开始自动清空。
@@ -84,12 +86,19 @@ D:\Programming\Python_dir_38\python.exe scripts\main.py
 | `scripts/tractor/fast_state.py` | 搜索用轻量状态：无 log/history，克隆便宜，判罚复用引擎 |
 | `scripts/tractor/moves.py` | 合法动作枚举（单张/对子/拖拉机 + 跟牌槽位填充） |
 | `scripts/tractor/ai_heuristic.py` | **阶段 1**：会记牌、会给队友送分、带 1 层评估的启发式 AI |
+| `scripts/tractor/ai_select.py` | 界面用的 AI 门面：把三档强度统一成一个接口 |
 | `scripts/tractor/eval_harness.py` | **阶段 0**：对局评测台（固定口径 + 95% 区间） |
 | `scripts/tests_search_ready.py` | 自测：验证上面三个模块和引擎判罚完全一致 |
 
 ```powershell
 # 界面：跑完整一局验证电脑强度切换的接线
 python scripts\tests_ui_ai.py
+
+# 跳过合法性校验的一致性（搜索提速后的安全网）
+python scripts\tests_trusted_moves.py
+
+# 搜索节点的耗时热点（开发用）
+python scripts\search_profile.py 8 300
 
 # 一致性自测（8 局、5470 个枚举动作、0 处不一致）
 python scripts\tests_search_ready.py
