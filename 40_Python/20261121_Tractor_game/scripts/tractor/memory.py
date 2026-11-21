@@ -59,6 +59,7 @@ class CardTracker:
         # seat -> 从亮主公开信息里得到的花色（他至少有一张）
         self.shown_suit: Dict[int, str] = {}
         self.played_cards: List[Card] = []
+        self.played_by_seat: Dict[int, List[Card]] = {s: [] for s in range(4)}
 
     # ------------------------------------------------------------------ 观察
     def observe_hand(self, cards: Sequence[Card]) -> None:
@@ -79,6 +80,7 @@ class CardTracker:
         for c in cards:
             self.played.add(card_id(c))
             self.played_cards.append(c)
+            self.played_by_seat[seat].append(c)
         if lead is None or seat == self.my_seat:
             return
         cat = lead.category
@@ -151,6 +153,31 @@ class CardTracker:
 
     def points_unseen_in(self, kind: str) -> int:
         return sum(card_points(c) for c in self.unseen_in_category(kind))
+
+    # ------------------------------------------------------- 主牌会不会被毙
+    def trump_total(self) -> int:
+        """整副牌里主牌一共有多少张（含常主 2 和级牌）。"""
+        return sum(1 for c in make_deck() if is_trump(c, self.level, self.trump_suit))
+
+    def trumps_remaining_upper(self) -> int:
+        """还没出现、也不在我手里的主牌张数（**上限**：其中可能有底牌）。"""
+        return len(self.unseen_in_category("T"))
+
+    def trumps_dead(self, bottom_size: int = 8) -> bool:
+        """主牌是不是已经"打干净"了。
+
+        推理：没出现过的主牌只可能在「三家手牌 + 底牌」里，而底牌最多 `bottom_size` 张。
+        所以只要 `剩余主牌 <= 底牌张数`，三家手上就**一张主牌都没有** → 谁也不能毙。
+        这是一个严格成立的推断，不是估计。
+        """
+        return self.trumps_remaining_upper() <= bottom_size
+
+    def plays_of(self, seat: int) -> List[Card]:
+        return list(self.played_by_seat.get(seat, ()))
+
+    def trumps_played_by(self, seat: int) -> int:
+        return sum(1 for c in self.played_by_seat.get(seat, ())
+                   if is_trump(c, self.level, self.trump_suit))
 
     def summary(self) -> str:
         parts = []

@@ -47,6 +47,7 @@ class HeuristicAI:
         self.opts = {
             "bury_void": False,      # 埋底时整门埋掉、造缺门
             "lead_master": False,    # 领出时优先兑现确定最大牌、避开被毙
+            "keep_pairs": False,     # 拆对子扣分（对子在拖拉机里很贵）
         }
         if opts:
             self.opts.update(opts)
@@ -192,7 +193,7 @@ class HeuristicAI:
             # 这一手直接结束本墩
             win = st.team(result.winner) == my_team
             gain = result.points if win else -result.points
-            return gain * 2.0 - self._cost(st, cards)
+            return gain * 2.0 - self._cost(st, seat, cards)
 
         winner = tmp.winner_so_far()
         leading = winner is not None and st.team(winner) == my_team
@@ -206,7 +207,7 @@ class HeuristicAI:
         if leading and winner == seat:
             val += _points(cards) * 0.5
         # 会浪费大牌要扣分
-        val -= self._cost(st, cards)
+        val -= self._cost(st, seat, cards)
         # 确定最大的牌给额外奖励（兑现）
         if self._is_master(st, cards, tr):
             val += 25.0
@@ -240,12 +241,24 @@ class HeuristicAI:
                 adj -= 6.0 * _points(cards)            # 分牌送人
         return adj
 
-    def _cost(self, st: FastState, cards: Sequence[Card]) -> float:
-        """打掉这些牌的代价：牌力越高越贵，主牌更贵。"""
+    def _cost(self, st: FastState, seat: int, cards: Sequence[Card]) -> float:
+        """打掉这些牌的代价：牌力越高越贵，主牌更贵；开了 keep_pairs 时拆对子也贵。"""
         total = 0.0
         for c in cards:
             p = power(c, st.level, st.trump_suit)
             total += p * (0.08 if is_trump(c, st.level, st.trump_suit) else 0.05)
+        if self.opts.get("keep_pairs"):
+            hand = st.hands[seat]
+            have: dict = {}
+            for c in hand:
+                have[(c.suit, c.rank)] = have.get((c.suit, c.rank), 0) + 1
+            used: dict = {}
+            for c in cards:
+                used[(c.suit, c.rank)] = used.get((c.suit, c.rank), 0) + 1
+            for key, n in used.items():
+                # 手里有对子/拖拉机组件，却只打出一部分 → 拆了
+                if have.get(key, 0) >= 2 and n < have[key]:
+                    total += 9.0 * n
         return total
 
     def _is_master(self, st: FastState, cards: Sequence[Card], tr: CardTracker) -> bool:
@@ -268,6 +281,8 @@ class HeuristicAI:
         if all(cat.slot_of(c) is not None and cat.power_of(c) >= tr.top_remaining_power(cat) for c in cards):
             if kind == "T":
                 return True
+            if tr.trumps_dead():
+                return True          # 主牌已经打干净 → 没人能毙，这张就是绝对安全
             attackers = [s for s in range(4) if st.team(s) != st.team(tr.my_seat)]
             return not tr.can_be_ruffed(kind, attackers)
         return False
