@@ -160,17 +160,34 @@ class CardTracker:
         return sum(1 for c in make_deck() if is_trump(c, self.level, self.trump_suit))
 
     def trumps_remaining_upper(self) -> int:
-        """还没出现、也不在我手里的主牌张数（**上限**：其中可能有底牌）。"""
+        """还没出现、也不在我手里的主牌张数 = 三家手牌里的主牌 + 底牌里的主牌。"""
         return len(self.unseen_in_category("T"))
 
-    def trumps_dead(self, bottom_size: int = 8) -> bool:
-        """主牌是不是已经"打干净"了。
+    def trumps_in_bottom_upper(self, bottom_size: int = 8) -> int:
+        """底牌里最多能有几张主牌（底牌一共就 `bottom_size` 张）。"""
+        return min(bottom_size, self.trumps_remaining_upper())
 
-        推理：没出现过的主牌只可能在「三家手牌 + 底牌」里，而底牌最多 `bottom_size` 张。
-        所以只要 `剩余主牌 <= 底牌张数`，三家手上就**一张主牌都没有** → 谁也不能毙。
-        这是一个严格成立的推断，不是估计。
+    def opponent_trumps_lower(self, bottom_size: int = 8) -> int:
+        """三家手上**至少**还有几张主牌（下限）。
+
+        未出现的主牌 = 三家的 + 底牌的，而底牌最多占 `bottom_size` 张，
+        所以三家至少还有 `未见主牌 - bottom_size` 张（不小于 0）。
         """
-        return self.trumps_remaining_upper() <= bottom_size
+        return max(0, self.trumps_remaining_upper() - bottom_size)
+
+    def opponent_trumps_upper(self, bottom_size: int = 8) -> int:
+        return self.trumps_remaining_upper()      # 底牌也可能是 0 张主牌
+
+    def trumps_dead(self, bottom_size: int = 8) -> bool:
+        """三家手上是不是**一张主牌都没有**（谁也不能毙）。
+
+        唯一严格的判据是：未出现的主牌 = 0（全在我手里或已经打出来了）。
+
+        注意：**不能用 `未见主牌 <= 8`**。底牌里到底有几张主牌是未知的，
+        `未见 8 张` 完全可能是"三家 8 张、底牌 0 张"。那样判"没人能毙"就是作弊，
+        而且会让 AI 主动把牌送出去。
+        """
+        return self.trumps_remaining_upper() == 0
 
     def plays_of(self, seat: int) -> List[Card]:
         return list(self.played_by_seat.get(seat, ()))
