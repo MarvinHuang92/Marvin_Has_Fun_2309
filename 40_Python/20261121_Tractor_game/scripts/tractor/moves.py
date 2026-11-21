@@ -237,3 +237,109 @@ def any_legal_move(state, seat: int) -> Optional[List[Card]]:
     """兜底：至少给一个合法动作（搜索截断时用）。"""
     moves = legal_moves(state, seat, max_moves=8)
     return moves[0] if moves else None
+
+
+# ---------------------------------------------------------------------------
+# 快速路径（给搜索的中间节点用）
+# ---------------------------------------------------------------------------
+#
+# `legal_moves` 是"全枚举 + 逐个用引擎判罚校验"，正确但很贵（实测 0.6 ms/节点），
+# 导致限时搜索只能搜到 3~4 手牌深。搜索的中间节点不需要全枚举，
+# 只需要**少量、合法、有代表性**的候选：
+#
+#   - 领出：最低/最高的单张、对子、拖拉机
+#   - 跟牌：最省 / 最贵两种填法（必须填的槽位用最低或最高的组合）
+#
+# 这里**不再调 is_legal_follow**：动作是按规则构造出来的，天然合法；
+# 万一构造错了，`FastState.play()` 会拒绝它，不会污染搜索。
+
+def _pick_slot(pool: List[Card], slot, cat: Category, high: bool) -> Optional[List[Card]]:
+    choices = _slot_choices(pool, slot, cat)
+    if not choices:
+        return None
+    key = lambda mv: sum(cat.power_of(c) for c in mv)
+    return max(choices, key=key) if high else min(choices, key=key)
+
+
+def _fast_leads(state, seat: int, limit: int) -> List[List[Card]]:
+    hand = list(state.hands[seat])
+    level, trump = state.level, state.trump_suit
+    out: List[List[Card]] = []
+    for kind, pool in _groups(hand, level, trump).items():
+        cat = _category_for(kind, level, trump)
+        ordered = sorted(pool, key=lambda c: cat.power_of(c))
+        out.append([ordered[0]])
+        out.append([ordered[-1]])
+        pairs = pairs_in(pool)
+        if pairs:
+            pairs.sort(key=lambda p: cat.power_of(p[0]))
+            out.append([pairs[0][0], pairs[0][1]])
+            out.append([pairs[-1][0], pairs[-1][1]])
+        for k in (2, 3):
+            runs = _runs_of_length(pool, cat, k)
+            if runs:
+                runs.sort(key=lambda mv: sum(cat.power_of(c) for c in mv))
+                out.append(runs[0])
+                out.append(runs[-1])
+    return _dedupe(out)[:limit]
+
+
+def _fast_follows(state, seat: int, limit: int) -> List[List[Card]]:
+    from .rules import match_slots
+
+    lead: LeadPattern = state.lead
+    hand = list(state.hands[seat])
+    cat = lead.category
+    n = len(lead.cards)
+    hand_cat = [c for c in hand if cat.contains(c)]
+    out: List[List[Card]] = []
+
+    if not hand_cat:
+        pool = sorted(hand, key=lambda c: card_rank_key(c))
+        if len(pool) >= n:
+            out.append(pool[:n])
+            out.append(pool[-n:])
+        return _dedupe(out)[:limit]
+
+    if len(hand_cat) < n:
+        rest = sorted([c for c in hand if not cat.contains(c)], key=lambda c: card_rank_key(c))
+        fill = n - len(hand_cat)
+        if fill <= len(rest):
+            out.append(list(hand_cat) + rest[:fill])
+            if fill:
+                out.append(list(hand_cat) + rest[-fill:])
+        return _dedupe(out)[:limit]
+
+    req = match_slots(hand_cat, lead.slots, cat, require_all=False, allow_partial=True)
+    fillable = [i for i, r in enumerate(req) if r is not None]
+    for high in (False, True):
+        pool = list(hand_cat)
+        chosen: List[Card] = []
+        ok = True
+        for i in fillable:
+            comp = _pick_slot(pool, lead.slots[i], cat, high)
+            if comp is None:
+                ok = False
+                break
+            chosen.extend(comp)
+            for c in comp:
+                pool.remove(c)
+        if not ok:
+            continue
+        need = n - len(chosen)
+        if need < 0:
+            continue
+        pool.sort(key=lambda c: card_rank_key(c))
+        out.append(chosen + pool[:need])
+    return _dedupe(out)[:limit]
+
+
+def card_rank_key(c: Card) -> float:
+    return float(c.rank)
+
+
+def legal_moves_fast(state, seat: int, limit: int = 8) -> List[List[Card]]:
+    """搜索中间节点用的少量候选（不是全枚举，但都是合法构造）。"""
+    if state.lead is None:
+        return _fast_leads(state, seat, limit)
+    return _fast_follows(state, seat, limit)

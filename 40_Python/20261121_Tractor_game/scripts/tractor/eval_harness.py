@@ -93,9 +93,40 @@ class HeuristicPolicy(Policy):
         return self.ai.play(game, seat)
 
 
+class SearchPolicy(Policy):
+    """阶段 3：亮主/埋底沿用启发式，出牌换成限深度搜索。"""
+
+    def __init__(self, name: str = "search", seed: int = 20261122,
+                 depth: int = 10, time_limit: float = 0.05):
+        from .ai_heuristic import HeuristicAI
+        from .ai_search import SearchAI
+
+        self.ai = HeuristicAI(rng=random.Random(seed))
+        self.brain = SearchAI(depth=depth, time_limit=time_limit, seed=seed)
+        self.name = name
+
+    def begin_deal(self, game):
+        self.ai.begin_deal(game)
+
+    def observe(self, game, seat, cards, lead):
+        self.ai.observe(game, seat, cards, lead)
+
+    def bid(self, game, seat):
+        return self.ai.bid(game, seat)
+
+    def bury(self, game, seat):
+        return self.ai.bury(game, seat)
+
+    def play(self, game, seat):
+        from .fast_state import FastState
+
+        return self.brain.choose(FastState.from_game(game), seat)
+
+
 REGISTRY = {
     "rule": RulePolicy,
     "heuristic": HeuristicPolicy,
+    "search": SearchPolicy,
 }
 
 
@@ -242,12 +273,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--deals", type=int, default=100)
     ap.add_argument("--seed", type=int, default=700000)
     ap.add_argument("--self-check", action="store_true", help="A 和 B 用同一策略，验证评测台本身无偏")
+    ap.add_argument("--depth", type=int, default=10, help="搜索最大深度（手牌数）")
+    ap.add_argument("--time", type=float, default=0.05, help="每步搜索的时间预算（秒）")
     args = ap.parse_args(argv)
 
-    pa = REGISTRY[args.a]()
-    pb = REGISTRY[args.b]()
+    def make(name):
+        if name == "search":
+            return SearchPolicy(name=name, depth=args.depth, time_limit=args.time)
+        return REGISTRY[name]()
+
+    pa = make(args.a)
+    pb = make(args.b)
     if args.self_check:
-        pb = REGISTRY[args.a]()
+        pb = make(args.a)
 
     stats = compare(pa, pb, args.deals, args.seed)
     report(pa, pb, stats)
