@@ -48,6 +48,7 @@ class HeuristicAI:
             "bury_void": False,      # 埋底时整门埋掉、造缺门
             "lead_master": False,    # 领出时优先兑现确定最大牌、避开被毙
             "keep_pairs": False,     # 拆对子扣分（对子在拖拉机里很贵）
+            "trump_void": True,      # 用「领主牌没跟」推断某人缺主牌
         }
         if opts:
             self.opts.update(opts)
@@ -281,10 +282,12 @@ class HeuristicAI:
         if all(cat.slot_of(c) is not None and cat.power_of(c) >= tr.top_remaining_power(cat) for c in cards):
             if kind == "T":
                 return True
-            if tr.trumps_dead():
-                return True          # 主牌已经打干净 → 没人能毙，这张就是绝对安全
             attackers = [s for s in range(4) if st.team(s) != st.team(tr.my_seat)]
-            return not tr.can_be_ruffed(kind, attackers)
+            tv = self.opts.get("trump_void", True)
+            # 对手已经暴露过缺主牌 → 谁也不能毙
+            if tv and tr.trumps_dead_for(attackers):
+                return True
+            return not tr.can_be_ruffed(kind, attackers, respect_trump_void=tv)
         return False
 
 

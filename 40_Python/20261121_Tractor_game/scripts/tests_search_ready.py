@@ -59,6 +59,7 @@ def check_deal(seed: int) -> dict:
     n_void_checked = 0
     n_void_bad = 0
     n_trump_dead = 0
+    n_trump_void = 0
 
     for _ in range(400):
         if game.phase != "play":
@@ -97,16 +98,18 @@ def check_deal(seed: int) -> dict:
                     # 还没轮到他出牌就无从观察，跳过
                     pass
 
-        # --- 检查 5：trumps_dead 一旦为真，三家必须真的一张主牌都没有 ---
+        # --- 检查 5：主牌缺门推断必须正确 ---
+        # 「领主牌时没跟主」= 这家没主牌了，和缺花色是同一个推断，必须严格成立
         if tracker.trumps_dead():
-            for s in range(4):
-                if s == tracker.my_seat:
-                    continue
-                real_trumps = [c for c in state.hands[s]
-                               if is_trump(c, state.level, state.trump_suit)]
-                assert not real_trumps, (
-                    "trumps_dead 误判：座位 %d 手里还有 %d 张主牌" % (s, len(real_trumps)))
             n_trump_dead += 1
+        for s in range(4):
+            if s == tracker.my_seat or not tracker.is_void(s, "T"):
+                continue
+            real_trumps = [c for c in state.hands[s]
+                           if is_trump(c, state.level, state.trump_suit)]
+            assert not real_trumps, (
+                "主牌缺门误判：座位 %d 手里还有 %d 张主牌" % (s, len(real_trumps)))
+            n_trump_void += 1
 
         cards = rule_ai.choose_play(game, seat)
         lead_before = game.trick.lead if game.trick else None
@@ -143,6 +146,7 @@ def check_deal(seed: int) -> dict:
         "void_bad": n_void_bad,
         "points": engine_points,
         "trump_dead": n_trump_dead,
+        "trump_void": n_trump_void,
     }
 
 
@@ -154,9 +158,10 @@ def main() -> int:
     for seed in range(1, 9):
         r = check_deal(seed)
         total_moves += r["moves"]
-        print("  seed=%d  %2d 墩  枚举 %4d 个动作，非法 %d，缺门漏判 %d，主牌清零判定 %d 次  %r"
+        print("  seed=%d  %2d 墩  枚举 %4d 个动作，非法 %d，缺门漏判 %d，"
+              "主牌清零 %d 次、缺主牌判定 %d 次  %r"
               % (r["seed"], r["tricks"], r["moves"], r["illegal"], r["void_bad"],
-                 r["trump_dead"], r["points"]))
+                 r["trump_dead"], r["trump_void"], r["points"]))
         assert r["illegal"] == 0, "有非法动作被枚举出来了"
         assert r["void_bad"] == 0, "缺门推断漏判"
     print("-" * 60)

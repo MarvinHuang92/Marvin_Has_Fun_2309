@@ -141,11 +141,36 @@ class CardTracker:
             for c in self.unseen_cards()
         )
 
-    def can_be_ruffed(self, kind: str, attackers: Iterable[int]) -> bool:
-        """这门还有没有人可能毙（即缺门且手里还有主）。粗判：只要有人已确认缺门就算。"""
+    def can_be_ruffed(self, kind: str, attackers: Iterable[int],
+                      respect_trump_void: bool = True) -> bool:
+        """这门还有没有人可能毙。
+
+        要同时满足两件事：
+          1. 他缺这门（已知缺门，或还没确定）
+          2. **他手里还有主牌**（已知缺主牌的就不能毙了）
+
+        第 2 条和缺门是同一个推断 —— 领主牌时没跟主牌，就说明他没主牌了。
+        所以"谁还能毙"可以精确到人，而不是只能靠全局计数估。
+        """
         if kind == "T":
             return False
-        return any(self.is_void(s, kind) for s in attackers)
+        if not respect_trump_void:
+            return any(self.is_void(s, kind) for s in attackers)
+        return any(
+            self.is_void(s, kind) and not self.is_void(s, "T")
+            for s in attackers
+        )
+
+    def trumps_dead_for(self, attackers: Iterable[int]) -> bool:
+        """对这些对手来说，主牌是不是"已经没了"（谁也不能毙）。
+
+        两种情况都算：
+          1. 未见主牌 = 0（全在我手里或已打出）
+          2. **这些对手都已经暴露过缺主牌**（领主时没跟主）
+        """
+        if self.trumps_remaining_upper() == 0:
+            return True
+        return all(self.is_void(s, "T") for s in attackers)
 
     def points_remaining(self) -> int:
         """还没出现的分牌总分（5 分 / 10 分 / K 10 分）。"""
@@ -179,13 +204,13 @@ class CardTracker:
         return self.trumps_remaining_upper()      # 底牌也可能是 0 张主牌
 
     def trumps_dead(self, bottom_size: int = 8) -> bool:
-        """三家手上是不是**一张主牌都没有**（谁也不能毙）。
+        """**全局**判断：是不是谁都没主牌了。
 
-        唯一严格的判据是：未出现的主牌 = 0（全在我手里或已经打出来了）。
+        唯一严格的全局判据是"未见主牌 = 0"。
 
-        注意：**不能用 `未见主牌 <= 8`**。底牌里到底有几张主牌是未知的，
-        `未见 8 张` 完全可能是"三家 8 张、底牌 0 张"。那样判"没人能毙"就是作弊，
-        而且会让 AI 主动把牌送出去。
+        ⚠️ 不能用 `未见主牌 <= 8`：底牌里有几张主牌是未知的，
+        "未见 8 张"完全可能是"三家 8 张、底牌 0 张"。而且底牌里的主牌整局都不会出现，
+        所以**光靠数牌永远数不清** —— 真正的判据是"谁领主牌时没跟主"（`trumps_dead_for`）。
         """
         return self.trumps_remaining_upper() == 0
 
