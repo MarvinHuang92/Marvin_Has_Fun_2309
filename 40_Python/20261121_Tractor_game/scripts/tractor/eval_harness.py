@@ -120,13 +120,50 @@ class SearchPolicy(Policy):
     def play(self, game, seat):
         from .fast_state import FastState
 
-        return self.brain.choose(FastState.from_game(game), seat)
+        return self.brain.choose(FastState.from_game(game), seat,
+                                 tracker=self.ai.tracker)
+
+
+class PIMCPolicy(Policy):
+    """阶段 3-②：多世界采样 + 限深度搜索。
+
+    亮主/埋底沿用启发式；出牌时按缺门约束采样 N 个世界，搜索后按根节点估值平均。
+    """
+
+    def __init__(self, name: str = "pimc", seed: int = 20261122,
+                 depth: int = 40, time_limit: float = 0.03, samples: int = 4):
+        from .ai_heuristic import HeuristicAI
+        from .ai_pimc import PIMCAI
+
+        self.ai = HeuristicAI(rng=random.Random(seed))
+        self.brain = PIMCAI(depth=depth, time_limit=time_limit,
+                            samples=samples, seed=seed)
+        self.name = name
+
+    def begin_deal(self, game):
+        self.ai.begin_deal(game)
+
+    def observe(self, game, seat, cards, lead):
+        self.ai.observe(game, seat, cards, lead)
+
+    def bid(self, game, seat):
+        return self.ai.bid(game, seat)
+
+    def bury(self, game, seat):
+        return self.ai.bury(game, seat)
+
+    def play(self, game, seat):
+        from .fast_state import FastState
+
+        return self.brain.choose(FastState.from_game(game), seat,
+                                 tracker=self.ai.tracker)
 
 
 REGISTRY = {
     "rule": RulePolicy,
     "heuristic": HeuristicPolicy,
     "search": SearchPolicy,
+    "pimc": PIMCPolicy,
 }
 
 
@@ -274,18 +311,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--seed", type=int, default=700000)
     ap.add_argument("--self-check", action="store_true", help="A 和 B 用同一策略，验证评测台本身无偏")
     ap.add_argument("--depth", type=int, default=10, help="搜索最大深度（手牌数）")
-    ap.add_argument("--time", type=float, default=0.05, help="每步搜索的时间预算（秒）")
+    ap.add_argument("--time", type=float, default=0.05, help="A 方每个世界的时间预算（秒）")
+    ap.add_argument("--time-b", type=float, default=None, help="B 方的时间预算（默认同 --time）")
+    ap.add_argument("--samples", type=int, default=4, help="PIMC 采样的世界数（A 方）")
+    ap.add_argument("--samples-b", type=int, default=None, help="B 方的世界数")
     args = ap.parse_args(argv)
+    t_b = args.time if args.time_b is None else args.time_b
+    s_b = args.samples if args.samples_b is None else args.samples_b
 
-    def make(name):
+    def make(name, budget, samples):
         if name == "search":
-            return SearchPolicy(name=name, depth=args.depth, time_limit=args.time)
+            return SearchPolicy(name=name, depth=args.depth, time_limit=budget)
+        if name == "pimc":
+            return PIMCPolicy(name=name, depth=args.depth, time_limit=budget,
+                              samples=samples)
         return REGISTRY[name]()
 
-    pa = make(args.a)
-    pb = make(args.b)
+    pa = make(args.a, args.time, args.samples)
+    pb = make(args.b, t_b, s_b)
     if args.self_check:
-        pb = make(args.a)
+        pb = make(args.a, args.time, args.samples)
 
     stats = compare(pa, pb, args.deals, args.seed)
     report(pa, pb, stats)

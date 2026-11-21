@@ -23,8 +23,8 @@ class SearchAI:
         self.rng = random.Random(seed)
         self.stats = {"calls": 0, "nodes": 0, "time": 0.0}
 
-    def choose(self, state: FastState, seat: int) -> List:
-        world = determinize(state, seat, self.rng)
+    def choose(self, state: FastState, seat: int, tracker=None) -> List:
+        world = determinize(state, seat, self.rng, tracker)
         mv, _ = self.searcher.choose(world, seat)
         self.stats["calls"] += 1
         self.stats["nodes"] += self.searcher.nodes

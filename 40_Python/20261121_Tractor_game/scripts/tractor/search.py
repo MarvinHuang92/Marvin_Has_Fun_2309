@@ -34,6 +34,10 @@ from .rules import build_category
 INF = float("inf")
 
 
+def _move_key(mv: Sequence[Card]) -> Tuple:
+    return tuple(sorted((c.suit, c.rank, c.copy) for c in mv))
+
+
 # ---------------------------------------------------------------------------
 # 定约采样
 # ---------------------------------------------------------------------------
@@ -49,23 +53,48 @@ def unseen_pool(state: FastState, seat: int) -> List[Card]:
     return [Card(*cid) for cid in pool]
 
 
-def determinize(state: FastState, seat: int, rng: random.Random) -> FastState:
+def determinize(state: FastState, seat: int, rng: random.Random,
+                tracker=None) -> FastState:
     """把未知牌随机分给其他三家（保留每家张数），返回一个新状态。
 
     注意：`state.hands` 里本来是真实手牌，这里**必须**用采样结果覆盖，
     否则搜索就变成偷看了。
+
+    传入 `tracker` 时会**尊重缺门约束**：已知某家缺某门，就不能发给他这门牌。
+    这比均匀采样更接近真实 —— 也正是"信息只有在能改变信念时才有价值"的落地。
     """
     pool = unseen_pool(state, seat)
     rng.shuffle(pool)
     new = state.clone()
-    i = 0
-    for s in range(4):
-        if s == seat:
-            continue
+
+    seats = [s for s in range(4) if s != seat]
+    if tracker is not None:
+        # 受限最严的先发（缺门多的先挑）
+        seats.sort(key=lambda s: -len(tracker.voids.get(s, ())))
+
+    for s in seats:
         n = len(state.hands[s])
-        new.hands[s] = pool[i:i + n]
-        i += n
+        banned = set(tracker.voids.get(s, ())) if tracker is not None else set()
+        if not banned:
+            new.hands[s] = pool[:n]
+            pool = pool[n:]
+            continue
+        allowed = [c for c in pool if _kind_of(c, state) not in banned]
+        if len(allowed) >= n:
+            picked = rng.sample(allowed, n)
+        else:
+            # 约束太紧（理论上不该发生）：先满足约束，剩余随便补
+            picked = list(allowed)
+            rest = [c for c in pool if c not in allowed]
+            picked += rng.sample(rest, min(n - len(picked), len(rest)))
+        for c in picked:
+            pool.remove(c)
+        new.hands[s] = picked
     return new
+
+
+def _kind_of(card: Card, state: FastState) -> str:
+    return "T" if is_trump(card, state.level, state.trump_suit) else card.suit
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +203,9 @@ class Searcher:
         self.nodes = 0
         self.depth_done = 0
         self.deadline = 0.0
+        # 上一次完整迭代里、根节点每个候选动作的估值（PIMC 跨世界平均要用）
+        self.root_values: Dict[Tuple, float] = {}
+        self.root_moves: Dict[Tuple, List[Card]] = {}
 
     # ------------------------------------------------------------------ 入口
     def choose(self, state: FastState, seat: int) -> Tuple[Optional[List[Card]], float]:
@@ -206,6 +238,8 @@ class Searcher:
             return None, 0.0
         best_val, best_move = -INF, cand[0]
         alpha, beta = -INF, INF
+        values: Dict[Tuple, float] = {}
+        moves: Dict[Tuple, List[Card]] = {}
         for mv in cand:
             child = state.clone()
             ok, _, res = child.play(seat, mv)
@@ -214,9 +248,14 @@ class Searcher:
             gain = self._gain(res, team)
             val = gain + self._search(child, team, depth - 1,
                                       alpha - gain, beta - gain)
+            key = _move_key(mv)
+            values[key] = val
+            moves[key] = list(mv)
             if val > best_val:
                 best_val, best_move = val, mv
             alpha = max(alpha, val)
+        self.root_values = values
+        self.root_moves = moves
         return best_move, best_val
 
     # ------------------------------------------------------------------ 主搜索
