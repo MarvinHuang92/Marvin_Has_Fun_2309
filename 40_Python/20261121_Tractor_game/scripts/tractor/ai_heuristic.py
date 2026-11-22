@@ -53,6 +53,10 @@ class HeuristicAI:
             "use_bottom": True,      # 我是最后埋底的人时，用确知的底牌收紧推断
             # 按人工思路埋底（保存确定最强的牌型 + 埋最弱一门 + 主牌阈值）
             "bury_smart": True,
+            # 防御性埋底：某门的两张级牌我一张都没有时，**降低**这门"埋断"的优先级
+            # （对手可能用这对级牌反主这门，我埋掉的牌就白送了）。
+            # 是"降优先级"而不是"禁止" —— 没有更好的门时仍然会造这个缺门。
+            "bury_defense_penalty": 6,
             # 出牌时朝断门方向垫牌（配合 AAK/AKK 这类牌型）
             # 垫牌朝断门：实测中性（w=6 → +0.001±0.059），权重加大反而有害
             # （w=20 → +0.030、w=60 → +0.058，正数=不开的那方赢）。默认关。
@@ -269,15 +273,35 @@ class HeuristicAI:
         for c in pool:
             by_suit.setdefault(kind_of(c), []).append(c)
 
-        # ---- 找"最弱一门"：副牌、张数最少、没有确定最强的牌
+        # ---- 防御：反主需要"同花色的级牌对"。如果某门的两张级牌我一张都没有
+        # （也没出过），对手就可能攥着这对牌反主这门 —— 一旦被反，我埋掉的这门牌
+        # 就白送了（还会被换底的人拿走）。所以这种门**不埋断**，至少留最大的。
+        level_pairs = {}
+        for c in pool:
+            if c.rank == level:
+                level_pairs[c.suit] = level_pairs.get(c.suit, 0) + 1
+
+        def counter_risk(k) -> bool:
+            # 两张级牌我一张都没拿到 -> 对手可能凑成对来反主这门
+            return level_pairs.get(k, 0) == 0
+
+        # ---- 找"最弱一门"：副牌、张数最少、没有确定最强的牌。
+        # 有被反主风险的门不是"禁止埋断"，而是**把优先级往后排**：
+        # 给它加一个虚拟长度（等于"再多 6 张才考虑"），只有在没有更好的选择时才用。
+        # 这比"一律不埋断"更合理 —— 不会因为一条防御规则就放弃造缺门。
+        void_penalty = self.opts.get("bury_defense_penalty", 6)
         weakest = None
+        best_score = None
         for k, cards in by_suit.items():
             if k == "T":
                 continue
             if any(is_top(c) for c in cards):
                 continue
-            if weakest is None or len(cards) < len(by_suit[weakest]):
-                weakest = k
+            score = len(cards)
+            if counter_risk(k):
+                score += void_penalty
+            if best_score is None or score < best_score:
+                weakest, best_score = k, score
 
         # ---- 给每张牌算"该埋的程度"（越大越先埋）
         def bury_score(c) -> float:
