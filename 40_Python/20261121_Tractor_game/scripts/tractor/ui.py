@@ -85,7 +85,7 @@ class TractorApp:
         self.track_font = tkfont.Font(family="Microsoft YaHei", size=9)
         self.track_font_strike = tkfont.Font(family="Microsoft YaHei", size=9, overstrike=1)
 
-        self.root.title("拖拉机（双升 · 80 分）")
+        self.root.title("拖拉机（双升 · 80 分）· V1.0")
         geo = load_window_geometry(self.cfg_dir)
         if not self._geometry_fits(geo):
             geo = self._default_geometry()
