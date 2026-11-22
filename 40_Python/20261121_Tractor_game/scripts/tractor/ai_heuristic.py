@@ -63,6 +63,8 @@ class HeuristicAI:
             "void_seek": False,
             "void_seek_w": 6.0,      # 垫牌朝断门的权重（每"少一张"给多少分）
             "bury_trump_min": 10,    # 主牌少于这个数就不许扣主牌（平均 9.72）
+            # 「能反必反」：None=按手牌强度决定；"max"=用最强的声明反；"min"=用最弱的反
+            "bid_always": None,
             # 反主要等庄家埋完底再反（为了拿到换底，而不是只换主牌花色）。
             # 实测强度中性（1500 局 +0.012±0.039），但**行为上更合理**：
             # 开着它 AI 才会真的换底（约 33% 的局），便于观察它的埋底习惯。
@@ -161,6 +163,16 @@ class HeuristicAI:
         counters = [b for b in bids if b.level > cur.level]
         if not counters:
             return None
+
+        # **「能反必反」**：不看自己哪门强，只要能反就反。
+        #   "max" -> 用手里**最强**的声明去反（可能直接上大王对，别人就反不动了）
+        #   "min" -> 用**最弱**的声明去反（单张级牌，别人容易再反，可能出现连环反主）
+        always = self.opts.get("bid_always")
+        if always == "max":
+            return max(counters, key=lambda b: (b.level, b.suit or "Z"))
+        if always == "min":
+            return min(counters, key=lambda b: b.level)
+
         best = max(counters, key=strength)
         # 只有分数明显更强才反主，避免无谓换底
         margin = 1.5 if mode == "basic" else 3.0
