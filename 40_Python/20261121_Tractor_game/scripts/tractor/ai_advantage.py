@@ -22,8 +22,9 @@ from . import value_net
 class AdvantageAI:
     def __init__(self, model_path: str, seed: int = 20261124,
                  samples: int = 1, waste_filter: bool = True,
-                 no_ruff_zero: bool = True) -> None:
-        self.opts = {"waste_filter": waste_filter, "no_ruff_zero": no_ruff_zero}
+                 no_ruff_zero: bool = True, tempo: float = 5.0) -> None:
+        self.opts = {"waste_filter": waste_filter, "no_ruff_zero": no_ruff_zero,
+                     "tempo": tempo}
         self.net = value_net.ValueNet.load(model_path)
         self.rng = random.Random(seed)
         self.samples = max(1, samples)
@@ -160,6 +161,23 @@ class AdvantageAI:
         if self.opts.get("waste_filter", True):
             cands = self._filter_waste(worlds[0], seat, cands)
 
+        # 「牌权」软奖励：从对方手里抢到领先，额外给分（和启发式那条同一个思路）
+        tempo = self.opts.get("tempo", 0.0)
+        lead_bonus = [0.0] * len(cands)
+        if tempo:
+            w0 = worlds[0]
+            prev = w0.winner_so_far() if w0.plays else None
+            if prev is not None and w0.team(prev) != w0.team(seat):
+                for i, mv in enumerate(cands):
+                    tmp = w0.clone()
+                    ok, _, res = tmp.play(seat, mv)
+                    if not ok:
+                        continue
+                    took = ((res is not None and w0.team(res.winner) == w0.team(seat))
+                            or (res is None and tmp.winner_so_far() == seat))
+                    if took:
+                        lead_bonus[i] = tempo
+
         scores = [0.0] * len(cands)
         for world in worlds:
             team = world.team(seat)
@@ -167,7 +185,7 @@ class AdvantageAI:
             for i, cards in enumerate(cands):
                 x = sf + value_net.action_features(world, seat, cards,
                                                    self.action_version)
-                scores[i] += self.net.predict_features(x)
+                scores[i] += self.net.predict_features(x) + lead_bonus[i]
 
         best_i = max(range(len(cands)), key=lambda i: scores[i])
         return cands[best_i]

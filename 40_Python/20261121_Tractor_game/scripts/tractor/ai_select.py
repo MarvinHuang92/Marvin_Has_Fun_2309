@@ -29,6 +29,7 @@ LEVEL_NAMES = {
 VALUE_MODEL = "value_v4.json"
 ADV_MODEL = "adv_mix3.json"
 ADV_SAMPLES = 4          # 优势网络每次决策平均几个世界
+ADV_TEMPO = 5.0          # 「抢牌权」软奖励（800 局配对实测 +0.105）
 
 
 class AiEngine:
@@ -55,7 +56,8 @@ class AiEngine:
 
             path = Path(__file__).resolve().parents[2] / "models" / ADV_MODEL
             try:
-                self._brain = AdvantageAI(str(path), samples=ADV_SAMPLES)
+                self._brain = AdvantageAI(str(path), samples=ADV_SAMPLES,
+                                          tempo=ADV_TEMPO)
                 self._search = None
                 return
             except Exception:
