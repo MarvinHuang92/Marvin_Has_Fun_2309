@@ -17,15 +17,18 @@ from . import ai as rule_ai
 from .cards import Card
 from .engine import Bid, TractorGame
 
-LEVELS = ("rule", "heuristic", "search")
+LEVELS = ("rule", "heuristic", "adv", "search")
 LEVEL_NAMES = {
     "rule": "简单（原始规则）",
     "heuristic": "会记牌（推荐）",
+    "adv": "会推理（强 · 快）",
     "search": "会搜索（最强 · 慢）",
 }
 
-# 界面「会搜索」这一档用的价值网络（相对项目根目录）
+# 界面各档用的模型（相对项目根目录 models/）
 VALUE_MODEL = "value_v4.json"
+ADV_MODEL = "adv_v1.json"
+ADV_SAMPLES = 4          # 优势网络每次决策平均几个世界
 
 
 class AiEngine:
@@ -44,6 +47,22 @@ class AiEngine:
             self._search = None
             return
         from .ai_heuristic import HeuristicAI
+
+        if self.kind == "adv":
+            from pathlib import Path
+
+            from .ai_advantage import AdvantageAI
+
+            path = Path(__file__).resolve().parents[2] / "models" / ADV_MODEL
+            try:
+                self._brain = AdvantageAI(str(path), samples=ADV_SAMPLES)
+                self._search = None
+                return
+            except Exception:
+                # 模型不在就退回会记牌，界面不能崩
+                self._brain = HeuristicAI()
+                self._search = None
+                return
 
         self._brain = HeuristicAI()
         if self.kind == "search":

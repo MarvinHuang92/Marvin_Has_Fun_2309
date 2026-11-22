@@ -132,6 +132,18 @@ def main():
     print("  [7] 搜索档加载价值网络（%d 维特征），出 8 手不炸（%d 步）✓"
           % (len(net.w1[0]), steps))
 
+    # 「会推理」= 优势网络
+    app.level_var.set("会推理（强 · 快）")
+    app.on_level_change()
+    assert app.ai_engine.kind == "adv"
+    from tractor.ai_advantage import AdvantageAI
+
+    assert isinstance(app.ai_engine._brain, AdvantageAI), "会推理档没换成优势网络"
+    app.on_next()
+    steps = play_one_deal(app, app.game, max_plays=8)
+    print("  [8] 会推理档（优势网络，%d 维输入）出 8 手正常（%d 步）✓"
+          % (len(app.ai_engine._brain.net.w1[0]), steps))
+
     root.destroy()
     print("-" * 60)
     print("全部通过")

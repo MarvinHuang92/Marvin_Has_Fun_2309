@@ -262,6 +262,77 @@ def state_features(state: FastState, team: int) -> List[float]:
     return _features_seat(state, team)
 
 
+ACTION_DIM = 15
+
+
+def action_features(state: FastState, seat: int, cards) -> List[float]:
+    """15 维动作特征。和 `_features_team` 的 60 维拼起来供优势网络使用。"""
+    from .rules import build_category
+
+    level = state.level
+    trump = state.trump_suit
+    n = len(cards)
+    kind_cnt = [0, 0, 0, 0, 0]
+    pts = 0
+    powers = []
+    ranks = set()
+    rank_cnt = {}
+    all_trump = True
+
+    for c in cards:
+        if (c.suit == "J") or c.rank == level or c.rank == 2 or (trump is not None and c.suit == trump):
+            k = 0
+            kind = "T"
+        else:
+            k = 1 + _SUIT_IDX[c.suit]
+            kind = c.suit
+            all_trump = False
+        kind_cnt[k] += 1
+        if c.rank == 5:
+            pts += 5
+        elif c.rank == 10 or c.rank == 13:
+            pts += 10
+        ranks.add(c.rank)
+        ranks_list = None
+        powers.append(build_category(level, trump, None if kind == "T" else kind).power_of(c))
+        rank_cnt[c.rank] = rank_cnt.get(c.rank, 0) + 1
+
+    is_lead = state.lead is None
+    feats: List[float] = [
+        n / 8.0,
+        0.0 if is_lead else 1.0,
+    ]
+    for k in range(5):
+        feats.append(kind_cnt[k] / 4.0)
+    feats.append(pts / 50.0)
+    mx = max(powers) if powers else 0
+    mn = min(powers) if powers else 0
+    feats.append(mx / POWER_SCALE)
+    feats.append(mn / POWER_SCALE)
+    feats.append((sum(powers) / len(powers) / POWER_SCALE) if powers else 0.0)
+    feats.append(len(ranks) / 4.0)
+    feats.append(1.0 if any(v >= 2 for v in rank_cnt.values()) else 0.0)
+    feats.append(1.0 if all_trump else 0.0)
+
+    # 这手牌出下去之后，当前这墩是不是我方领先
+    if not is_lead and state.plays:
+        winner = state.winner_so_far()
+        mine = winner is not None and (0 if winner in (0, 2) else 1) == state.team(seat)
+        cur = 0
+        if winner is not None:
+            lead_cat = state.lead.category
+            for s_, played in state.plays:
+                if s_ == winner:
+                    for c in played:
+                        cur = max(cur, lead_cat.power_of(c))
+        feats.append(1.0 if (mx > cur or mine) and mx >= cur else 0.0)
+    else:
+        feats.append(1.0 if is_lead else 0.0)
+
+    assert len(feats) == ACTION_DIM, len(feats)
+    return feats
+
+
 try:                       # 可选加速：有 numpy 就用，没有也能跑
     import numpy as _np
 except Exception:          # pragma: no cover

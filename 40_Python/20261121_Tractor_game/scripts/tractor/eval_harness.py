@@ -93,6 +93,25 @@ class HeuristicPolicy(Policy):
         return self.ai.play(game, seat)
 
 
+class AdvantagePolicy(HeuristicPolicy):
+    """优势网络直接选牌：枚举所有合法走法，取「(局面,动作) -> 优势」最高的一手。
+
+    亮主/埋底/记牌沿用启发式（优势网络只负责出牌）。
+    """
+
+    def __init__(self, name: str = "adv", seed: int = 20261124,
+                 model: str = "models/adv_v1.json", samples: int = 1) -> None:
+        from pathlib import Path
+
+        from .ai_advantage import AdvantageAI
+
+        path = Path(model)
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parents[2] / path
+        self.ai = AdvantageAI(str(path), seed=seed, samples=samples)
+        self.name = name
+
+
 class SearchPolicy(Policy):
     """阶段 3：亮主/埋底沿用启发式，出牌换成限深度搜索。"""
 
@@ -171,6 +190,7 @@ class PIMCPolicy(Policy):
 REGISTRY = {
     "rule": RulePolicy,
     "heuristic": HeuristicPolicy,
+    "adv": AdvantagePolicy,
     "search": SearchPolicy,
     "pimc": PIMCPolicy,
 }
@@ -355,6 +375,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="A 方搜索内部节点的跟牌候选数（2 或 4）")
     ap.add_argument("--b-follow", type=int, default=2,
                     help="B 方搜索内部节点的跟牌候选数（2 或 4）")
+    ap.add_argument("--adv-samples", type=int, default=1,
+                    help="adv 策略每次决策抽样几个世界做平均")
+    ap.add_argument("--adv-model", default="models/adv_v1.json",
+                    help="adv 策略用的优势网络")
     ap.add_argument("--dump", default="", help="把逐局 a_delta 写到这个文件（做配对比较）")
     ap.add_argument("--value-model", default="models/value_v4.json",
                     help="eval=value 时加载的价值网络")
@@ -395,6 +419,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     def make(name, budget, samples, opts_text="", eval_kind="control",
              follow_variants=2):
+        if name == "adv":
+            return AdvantagePolicy(name=name, model=args.adv_model,
+                                   samples=args.adv_samples)
         if name == "search":
             return SearchPolicy(name=name, depth=args.depth, time_limit=budget,
                                 eval_kind=eval_kind,
