@@ -102,7 +102,7 @@ class AdvantagePolicy(HeuristicPolicy):
     def __init__(self, name: str = "adv", seed: int = 20261124,
                  model: str = "models/adv_v1.json", samples: int = 1,
                  waste_filter: bool = True, no_ruff_zero: bool = True,
-                 tempo: float = 0.0) -> None:
+                 tempo: float = 0.0, risk: float = 0.0) -> None:
         from pathlib import Path
 
         from .ai_advantage import AdvantageAI
@@ -112,7 +112,8 @@ class AdvantagePolicy(HeuristicPolicy):
             path = Path(__file__).resolve().parents[2] / path
         self.ai = AdvantageAI(str(path), seed=seed, samples=samples,
                               waste_filter=waste_filter,
-                              no_ruff_zero=no_ruff_zero, tempo=tempo)
+                              no_ruff_zero=no_ruff_zero, tempo=tempo,
+                              risk=risk)
         self.name = name
 
 
@@ -387,6 +388,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="A 方 adv 是否启用废牌过滤器（覆盖 --adv-waste）")
     ap.add_argument("--b-adv-waste", type=int, default=None,
                     help="B 方 adv 是否启用废牌过滤器")
+    ap.add_argument("--adv-risk", type=float, default=0.0,
+                    help="adv 的「被打回来」风险惩罚系数 lambda")
+    ap.add_argument("--a-adv-risk", type=float, default=None)
+    ap.add_argument("--b-adv-risk", type=float, default=None)
     ap.add_argument("--adv-tempo", type=float, default=0.0,
                     help="adv 策略的「抢牌权」软奖励（单位：净得分）")
     ap.add_argument("--a-adv-tempo", type=float, default=None)
@@ -439,7 +444,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     def make(name, budget, samples, opts_text="", eval_kind="control",
              follow_variants=2, adv_model="", adv_waste=None,
-             adv_ruffzero=None, adv_tempo=None):
+             adv_ruffzero=None, adv_tempo=None, adv_risk=None):
         if name == "adv":
             return AdvantagePolicy(name=name, model=adv_model or args.adv_model,
                                    samples=args.adv_samples,
@@ -451,7 +456,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                                      else adv_ruffzero),
                                    tempo=float(args.adv_tempo
                                                if adv_tempo is None
-                                               else adv_tempo))
+                                               else adv_tempo),
+                                   risk=float(args.adv_risk
+                                              if adv_risk is None
+                                              else adv_risk))
         if name == "search":
             return SearchPolicy(name=name, depth=args.depth, time_limit=budget,
                                 eval_kind=eval_kind,
@@ -477,9 +485,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     pa = make(args.a, args.time, args.samples, args.a_opts, args.a_eval,
               args.a_follow, args.a_adv_model, args.a_adv_waste,
-              args.a_adv_ruffzero, args.a_adv_tempo)
+              args.a_adv_ruffzero, args.a_adv_tempo, args.a_adv_risk)
     pb = make(args.b, t_b, s_b, args.b_opts, args.b_eval, args.b_follow,
-              args.b_adv_model, args.b_adv_waste, args.b_adv_ruffzero, args.b_adv_tempo)
+              args.b_adv_model, args.b_adv_waste, args.b_adv_ruffzero, args.b_adv_tempo, args.b_adv_risk)
     if args.self_check:
         pb = make(args.a, args.time, args.samples, args.a_opts)
 

@@ -17,14 +17,19 @@ from .fast_state import FastState
 from .moves import legal_moves
 from .search import determinize
 from . import value_net
+from .cards import make_deck as _make_deck
+from .memory import card_id as _cid
+
+_DECK = _make_deck()
 
 
 class AdvantageAI:
     def __init__(self, model_path: str, seed: int = 20261124,
                  samples: int = 1, waste_filter: bool = True,
-                 no_ruff_zero: bool = True, tempo: float = 5.0) -> None:
+                 no_ruff_zero: bool = True, tempo: float = 5.0,
+                 risk: float = 0.0) -> None:
         self.opts = {"waste_filter": waste_filter, "no_ruff_zero": no_ruff_zero,
-                     "tempo": tempo}
+                     "tempo": tempo, "risk": risk}
         self.net = value_net.ValueNet.load(model_path)
         self.rng = random.Random(seed)
         self.samples = max(1, samples)
@@ -145,6 +150,62 @@ class AdvantageAI:
         short = [mv for mv, v in zip(cands, vals) if v <= best + 0.2]
         return short or cands
 
+    def _lead_risk(self, world, seat, mv) -> float:
+        """领出这一手的风险（0~1 的"被打回来"概率 × 代价）。"""
+        from bisect import bisect_right
+
+        from .cards import is_trump
+        from .rules import build_category
+
+        level, trump = world.level, world.trump_suit
+        kind = "T" if is_trump(mv[0], level, trump) else mv[0].suit
+        cat = build_category(level, trump, None if kind == "T" else kind)
+        top = max(cat.power_of(c) or 0 for c in mv)
+        pts = sum(5 if c.rank == 5 else (10 if c.rank in (10, 13) else 0) for c in mv)
+        cost = sum((cat.power_of(c) or 0) for c in mv) / 1000.0
+
+        tr = self.tracker
+        if tr is None:
+            return 0.0
+
+        # 未见牌里这一门的牌力分布（每次决策缓存一次）
+        cache = getattr(self, "_risk_cache", None)
+        key = (id(world), kind)
+        if cache is None or cache.get("key") != id(world):
+            cache = {"key": id(world)}
+            unseen = tr.unseen_ids()
+            by_kind = {}
+            for c in _DECK:
+                if _cid(c) in unseen:
+                    k = "T" if is_trump(c, level, trump) else c.suit
+                    by_kind.setdefault(k, []).append(
+                        build_category(level, trump,
+                                       None if k == "T" else k).power_of(c) or 0)
+            for k in by_kind:
+                by_kind[k].sort()
+            cache["kinds"] = by_kind
+            self._risk_cache = cache
+        powers = cache["kinds"].get(kind, [])
+        n = len(powers)
+        k_beat = n - bisect_right(powers, top)
+
+        p_total = 1.0
+        my_team = world.team(seat)
+        for other in range(4):
+            if world.team(other) == my_team:
+                continue
+            h = len(world.hands[other])
+            if tr.is_void(other, kind):
+                # 缺门：有主牌就能毙（主牌还剩多少不知道，给个保守概率）
+                p = 0.7 if tr.trumps_remaining_upper() > 0 else 0.0
+            elif n <= 0:
+                p = 0.0
+            else:
+                p = min(1.0, k_beat * h / n)
+            p_total *= (1.0 - p)
+        p_beat = 1.0 - p_total
+        return p_beat * (pts + cost)
+
     def play(self, game: TractorGame, seat: int) -> List[Card]:
         real = FastState.from_game(game)
         self.helper.sync_bottom(real, seat)
@@ -178,6 +239,15 @@ class AdvantageAI:
                     if took:
                         lead_bonus[i] = tempo
 
+        # 「优势 − λ·风险」：只在领出时算风险
+        risk_lam = self.opts.get("risk", 0.0)
+        risk_pen = [0.0] * len(cands)
+        if risk_lam and not worlds[0].plays:
+            self._risk_cache = None
+            for i, mv in enumerate(cands):
+                if len(mv) >= 2:
+                    risk_pen[i] = risk_lam * self._lead_risk(worlds[0], seat, mv)
+
         scores = [0.0] * len(cands)
         for world in worlds:
             team = world.team(seat)
@@ -185,7 +255,7 @@ class AdvantageAI:
             for i, cards in enumerate(cands):
                 x = sf + value_net.action_features(world, seat, cards,
                                                    self.action_version)
-                scores[i] += self.net.predict_features(x) + lead_bonus[i]
+                scores[i] += self.net.predict_features(x) + lead_bonus[i] - risk_pen[i]
 
         best_i = max(range(len(cands)), key=lambda i: scores[i])
         return cands[best_i]
