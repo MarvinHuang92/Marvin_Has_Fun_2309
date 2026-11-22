@@ -46,6 +46,9 @@ class FastState:
     void_seats: Set[int] = field(default_factory=set)
     trick_no: int = 0
     last_burier: Optional[int] = None      # 谁是最后埋底的人（决定"我知不知道底牌"）
+    # 埋底的先后顺序（每次埋底/换底都记一个座位）。换底可能连续发生多次，
+    # 推"我看过的底牌现在在谁手里"必须用这个顺序，只用 last_burier 是错的。
+    buriers: Tuple[int, ...] = ()
 
     # ------------------------------------------------------------------ 构造
     @classmethod
@@ -70,6 +73,9 @@ class FastState:
             st.leader = game.trick.leader
         st.trick_no = getattr(game, "trick_no", 0)
         st.last_burier = getattr(game, "last_burier", None)
+        hist = getattr(game, "bottom_history", None) or []
+        st.buriers = tuple(h.get("burier") for h in hist
+                           if h.get("burier") is not None)
         return st
 
     def clone(self) -> "FastState":
@@ -87,6 +93,7 @@ class FastState:
             void_seats=set(self.void_seats),
             trick_no=self.trick_no,
             last_burier=self.last_burier,
+            buriers=self.buriers,
         )
 
     # ------------------------------------------------------------------ 基础

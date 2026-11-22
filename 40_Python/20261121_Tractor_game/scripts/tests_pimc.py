@@ -113,6 +113,36 @@ def main() -> int:
     assert ai._my_buried.get(seat) == list(suggested), "真的埋了却没记住"
     print("  [6] 底牌记忆只在提交后记录 ✓")
 
+    # 7) 换底推理：我看过的底牌只能出现在「我埋底之后换过底的人」手里
+    from tractor.memory import card_id as _cid
+
+    tracker = CardTracker(state.level, state.trump_suit, my_seat=seat)
+    tracker.observe_hand(state.hands[seat])
+    # 伪造：我看过 3 张底牌，之后只有座位 (seat+1)%4 换过底
+    others = [s_ for s_ in range(4) if s_ != seat]
+    holder = others[0]
+    sample = []
+    for s_ in others:
+        for c in state.hands[s_]:
+            if c not in sample:
+                sample.append(c)
+        if len(sample) >= 3:
+            break
+    tracker.stale_kitty = {_cid(c) for c in sample[:3]}
+    tracker.stale_holders = {holder}
+
+    bad = 0
+    for k in range(30):
+        w = determinize(state, seat, random.Random(900 + k), tracker)
+        for s_ in others:
+            if s_ == holder:
+                continue
+            for c in w.hands[s_]:
+                if _cid(c) in tracker.stale_kitty:
+                    bad += 1
+    assert bad == 0, "换底推理被违反：非参与者拿到了我看过的牌 %d 次" % bad
+    print("  [7] 换底推理：30 次采样里，非换底参与者 0 次拿到我看过的牌 ✓")
+
     print("-" * 62)
     print("全部通过")
     return 0

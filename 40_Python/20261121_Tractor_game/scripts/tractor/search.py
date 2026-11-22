@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from . import moves as moves_mod
 from .cards import Card, card_points, is_trump, make_deck, power
 from .fast_state import FastState
+from .memory import card_id
 from .rules import build_category
 
 INF = float("inf")
@@ -98,14 +99,23 @@ def determinize(state: FastState, seat: int, rng: random.Random,
         # 受限最严的先发（缺门多的先挑）
         seats.sort(key=lambda s: -len(tracker.voids.get(s, ())))
 
+    # 底牌被换过时，我看过的那些牌只可能在"我埋底之后换过底的人"手里或底牌里
+    stale = getattr(tracker, "stale_kitty", None) if tracker is not None else None
+    holders = getattr(tracker, "stale_holders", None) or set()
+
     for s in seats:
         n = len(state.hands[s])
         banned = set(tracker.voids.get(s, ())) if tracker is not None else set()
-        if not banned:
+        banned_ids = set()
+        if stale and s not in holders:
+            banned_ids = stale
+        if not banned and not banned_ids:
             new.hands[s] = pool[:n]
             pool = pool[n:]
             continue
-        allowed = [c for c in pool if _kind_of(c, state) not in banned]
+        allowed = [c for c in pool
+                   if _kind_of(c, state) not in banned
+                   and (not banned_ids or card_id(c) not in banned_ids)]
         if len(allowed) >= n:
             picked = rng.sample(allowed, n)
         else:

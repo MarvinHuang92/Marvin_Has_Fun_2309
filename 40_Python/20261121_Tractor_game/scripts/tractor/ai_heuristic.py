@@ -26,7 +26,7 @@ from .cards import Card, card_points, is_trump, power
 from .engine import Bid, TractorGame
 from .fast_state import FastState
 from .rules import bottom_multiplier, decompose_lead
-from .memory import CardTracker
+from .memory import CardTracker, card_id
 
 POINT_RANKS = (5, 10, 13)
 
@@ -62,13 +62,19 @@ class HeuristicAI:
         if opts:
             self.opts.update(opts)
         self.tracker: Optional[CardTracker] = None
-        self._my_buried: dict = {}       # seat -> 我埋下去的那 8 张
+        self._my_buried: dict = {}       # seat -> 我最近一次埋下去的那 8 张
+        self._seen_kitty: dict = {}      # seat -> 我这局看过的所有底牌（并集）
         self._deal_key: Optional[Tuple] = None
 
     # ------------------------------------------------------------------ 生命周期
     def begin_deal(self, game: TractorGame) -> None:
         """庄家/闲家定了之后调用一次：重置记忆。"""
         self.tracker = CardTracker(game.level, game.trump_suit, my_seat=0)
+        # **必须一并清掉"我埋过什么"**：这两个字典是跨局累积的，
+        # 不清的话上一局埋过底的座位会被当成"这一局也看过底牌"，
+        # 甚至让 known_bottom 装进上一局的牌（错误信息比没有信息更糟）。
+        self._my_buried.clear()
+        self._seen_kitty.clear()
         self._deal_key = (game.deal_no, game.level, game.trump_suit, game.zhuang)
 
     def _ensure(self, game: TractorGame, seat: int) -> CardTracker:
@@ -193,6 +199,7 @@ class HeuristicAI:
         AI 就会错误地以为自己知道底牌。
         """
         self._my_buried[seat] = list(cards)
+        self._seen_kitty.setdefault(seat, set()).update(card_id(c) for c in cards)
 
     def sync_bottom(self, st: FastState, seat: int) -> None:
         """把"我是否知道底牌"同步给记牌器。
@@ -202,14 +209,35 @@ class HeuristicAI:
         """
         if self.tracker is None:
             return
+        # **每次都先全部清空**：这几个字段是按座位算的，上一个座位算完的残留
+        # 会让下一个座位读到别人的信息（早先就是漏清 stale_holders 才出的问题）。
+        self.tracker.known_bottom = set()
+        self.tracker.stale_kitty = set()
+        self.tracker.stale_holders = set()
         if not self.opts.get("use_bottom", True):
-            self.tracker.known_bottom = set()
             return
         mine = self._my_buried.get(seat)
         if mine and st.last_burier == seat:
             self.tracker.set_known_bottom(mine)
+            return
+
+        if not self.opts.get("stale_kitty", True):
+            return
+        seen = self._seen_kitty.get(seat)
+        if not seen or st.last_burier is None or st.last_burier == seat:
+            return
+        # 我埋底之后还换过底的人 —— 只有他们（和底牌）可能拿着我看过的牌。
+        # **换底可以连续发生多次**，所以要用完整的埋底顺序，不是只看最后一个。
+        order = list(getattr(st, "buriers", ()) or ())
+        if seat in order:
+            after = set(order[order.index(seat) + 1:])
         else:
-            self.tracker.known_bottom = set()
+            after = set(order)          # 不知道我埋在第几次，保守放行全部
+        after.discard(seat)
+        if not after:
+            return                      # 之后没人换过底 → 那几张只可能在底牌里
+        self.tracker.stale_kitty = set(seen)
+        self.tracker.stale_holders = after
 
     # ------------------------------------------------------------------ 出牌
     def play(self, game: TractorGame, seat: int) -> List[Card]:

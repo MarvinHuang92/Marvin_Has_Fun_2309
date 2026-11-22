@@ -63,6 +63,12 @@ class CardTracker:
         # **我确知的底牌**（只有"最后埋底的人是我自己"时才非空）。
         # 有了它，未见牌里就能扣掉这 8 张 → 对手的牌完全确定。
         self.known_bottom: Set[CardId] = set()
+        # **我看过、但底牌后来被别人换掉了的那些牌。**
+        # 它们只可能在"我埋底之后换过底的每个人"手里、或者仍然是底牌。
+        # **换底可以连续发生多次**，所以 stale_holders 是那些人的集合，
+        # 不是只有最后一个埋底者。
+        self.stale_kitty: Set[CardId] = set()
+        self.stale_holders: Set[int] = set()
 
     # ------------------------------------------------------------------ 观察
     def observe_hand(self, cards: Sequence[Card]) -> None:
