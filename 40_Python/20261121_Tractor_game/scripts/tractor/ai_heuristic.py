@@ -65,6 +65,12 @@ class HeuristicAI:
             "bury_trump_min": 10,    # 主牌少于这个数就不许扣主牌（平均 9.72）
             # 「能反必反」：None=按手牌强度决定；"max"=用最强的声明反；"min"=用最弱的反
             "bid_always": None,
+            # 在 bid_initial 就反主的门槛（越大越少早反）。
+            # 1500 局 A/B：门槛 10 比"只等换底"强 +0.049±0.045（勉强显著），
+            # 而且门槛越低越好是单调的（10 > 14 > 18 > 永不早反）。
+            # **代价**：门槛 10 时换底率 23% -> **0%**（手牌够强就一律早反）。
+            # 想看它换底的话，设成 1e9 即可恢复"只等换底"的行为。
+            "bid_early_min": 10,
             # 反主要等庄家埋完底再反（为了拿到换底，而不是只换主牌花色）。
             # 实测强度中性（1500 局 +0.012±0.039），但**行为上更合理**：
             # 开着它 AI 才会真的换底（约 33% 的局），便于观察它的埋底习惯。
@@ -152,6 +158,17 @@ class HeuristicAI:
         if (self.opts.get("bid_wait_bury", False)
                 and game.phase == "bid_initial"
                 and game.team(cur.seat) != game.team(seat)):
+            # 默认等埋完再反（换底）。但**如果手牌足够硬**，早反也很有价值
+            # （实测 bid_initial 的单次反主值 +0.41，比带换底的 +0.16 还高）——
+            # 因为早反是"抢主牌花色"，庄家只能在你的花色下埋底。
+            # `bid_early_min` 就是这个"够硬"的门槛；默认 1e9 = 永不早反。
+            early_min = self.opts.get("bid_early_min", 1e9)
+            if early_min < 1e8:
+                early = [b for b in bids if b.level > cur.level]
+                if early:
+                    pick = max(early, key=strength)
+                    if strength(pick) >= early_min:
+                        return pick
             return None
         if cur.seat == seat:
             streng = [b for b in bids if b.strengthen]
