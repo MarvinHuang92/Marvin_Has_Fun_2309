@@ -85,6 +85,11 @@ def determinize(state: FastState, seat: int, rng: random.Random,
     """
     pool = unseen_pool(state, seat,
                        known_bottom=getattr(tracker, "known_bottom", None))
+    # **先排序再洗**：牌池原来按"哪张牌在谁手里"的顺序拼出来，
+    # 同样的随机种子会因为拼装顺序不同而抽出不同的世界。
+    # 排序后采样只依赖牌的**多重集**，与输入顺序无关 —— 既能复现，
+    # 也让"换掉对手手牌不影响决策"这个审计成立。
+    pool.sort(key=lambda c: (c.rank, c.suit, c.copy))   # copy 是两副牌的副本号
     rng.shuffle(pool)
     new = state.clone()
 
