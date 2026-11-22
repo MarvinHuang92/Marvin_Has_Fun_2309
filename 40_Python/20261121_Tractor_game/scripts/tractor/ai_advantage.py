@@ -30,7 +30,6 @@ class AdvantageAI:
         # 动作特征版本由权重维度推断：75 = 60+15(v1)，80 = 60+20(v2)
         self.action_version = 2 if (len(self.net.w1[0]) - 60) == 20 else 1
         self.helper = None
-        self.tracker = None
         self._build_helper()
 
     def _build_helper(self) -> None:
@@ -38,7 +37,15 @@ class AdvantageAI:
         from .ai_heuristic import HeuristicAI
 
         self.helper = HeuristicAI(rng=self.rng)
-        self.tracker = self.helper.tracker
+
+    @property
+    def tracker(self):
+        """记牌器是 `begin_deal` 时才建的，所以这里必须每次现取。
+
+        早先写成 `self.tracker = self.helper.tracker`（构造时取），拿到的是 None，
+        导致 determinize **一直没用缺门约束** —— 相当于把记牌信息白扔了。
+        """
+        return self.helper.tracker
 
     # ------------------------------------------------------------------ 接口
     def begin_deal(self, game: TractorGame) -> None:
