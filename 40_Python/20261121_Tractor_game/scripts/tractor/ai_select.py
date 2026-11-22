@@ -27,7 +27,7 @@ LEVEL_NAMES = {
 
 # 界面各档用的模型（相对项目根目录 models/）
 VALUE_MODEL = "value_v4.json"
-ADV_MODEL = "adv_mix1.json"
+ADV_MODEL = "adv_mix2.json"
 ADV_SAMPLES = 4          # 优势网络每次决策平均几个世界
 
 
