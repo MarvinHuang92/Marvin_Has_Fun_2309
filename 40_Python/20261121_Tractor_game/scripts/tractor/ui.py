@@ -167,6 +167,13 @@ class TractorApp:
             bg="#f8fbff", fg="#17324d",
         )
         self.human_label.pack(fill="x", padx=8, pady=6)
+        # 我方笔记：记"哪些大牌还没出过"这类全局信息。程序不读也不校验。
+        self.human_note = tk.Text(
+            human_box, height=2, wrap="word", bd=1, relief="solid",
+            font=("Microsoft YaHei", 9), bg="#e8f5e9", fg="#1b5e20",
+            insertbackground="#1b5e20",
+        )
+        self.human_note.pack(fill="x", padx=8, pady=(0, 6))
 
         # actions + hand
         middle = tk.Frame(self.root, bg="#eef3f8")
@@ -262,8 +269,10 @@ class TractorApp:
 
     def _make_ai_panel(self, parent: tk.Frame, seat: int, row: int, col: int) -> None:
         names = {1: "电脑·下家", 2: "电脑·对家", 3: "电脑·上家"}
-        box = tk.LabelFrame(parent, text=f"{names[seat]}（{self._team_label(seat)}）",
-                            font=("Microsoft YaHei", 10), bg="#f8fbff", fg="#17324d")
+        box = tk.LabelFrame(
+            parent,
+            text=f"{names[seat]}（{self._team_label(seat)}）（{self._seat_dir(seat)}）",
+            font=("Microsoft YaHei", 10), bg="#f8fbff", fg="#17324d")
         box.grid(row=row, column=col, sticky="nsew", padx=6, pady=4)
 
         content = tk.Frame(box, bg="#f8fbff")
@@ -320,17 +329,35 @@ class TractorApp:
 
     # ------------------------------------------------------------- helpers
     def _clear_notes(self) -> None:
-        """新的一局开始，把三个笔记框清空。"""
+        """新的一局开始，把所有笔记框清空。"""
         for panel in self.ai_panels.values():
             note = panel.get("note")
             if note is not None:
                 note.delete("1.0", "end")
+        note = getattr(self, "human_note", None)
+        if note is not None:
+            note.delete("1.0", "end")
+
+    def _role_text(self, seat: int) -> str:
+        """庄家 / 庄家队友 / 闲家。庄家的对家不算"闲家"，否则三个人都叫闲家。"""
+        g = self.game
+        if g.zhuang is None:
+            return "未定"
+        if seat == g.zhuang:
+            return "庄家"
+        if seat == (g.zhuang + 2) % 4:
+            return "庄家队友"
+        return "闲家"
 
     def _team_label(self, seat: int) -> str:
         return "你方" if self.game.team(seat) == 0 else "对方"
 
     def _seat_name(self, seat: int) -> str:
         return {0: "你", 1: "下家", 2: "对家", 3: "上家"}[seat]
+
+    def _seat_dir(self, seat: int) -> str:
+        """方位：你在南、下家在东、对家在北、上家在西。"""
+        return {0: "南", 1: "东", 2: "北", 3: "西"}[seat]
 
     def _phase_text(self) -> str:
         if self.game.phase == "bid_initial":
@@ -351,7 +378,11 @@ class TractorApp:
         return f"{SUIT_SYMBOLS[self.game.trump_suit]}{SUIT_NAMES[self.game.trump_suit]}"
 
     def _current_bid_text(self) -> str:
-        return self.game.declaration.label() if self.game.declaration else "无"
+        d = self.game.declaration
+        if d is None:
+            return "无"
+        # 亮主的人可能不是最后埋底的人（中间会被换底），所以这里要标出来
+        return "%s（%s亮）" % (d.label(), self._seat_name(d.seat))
 
     def _human_pending_bury(self) -> bool:
         return self.game.phase in ("bury_initial", "bury_extra") and self.game.pending_bury_by == 0
@@ -389,13 +420,13 @@ class TractorApp:
 
         for seat in (1, 2, 3):
             panel = self.ai_panels[seat]
-            role = "庄家" if seat == g.zhuang else "闲家"
+            role = self._role_text(seat)
             panel["count"].configure(text=f"手牌 {len(g.hands[seat])} 张")
             panel["role"].configure(text=f"{role} · {self._team_label(seat)}")
             self._set_colored_text(panel["last"], self._last_play_text(seat))
         self.human_label.configure(
             text=f"手牌 {len(g.hands[0])} 张 · "
-                 f"{'庄家' if g.zhuang == 0 else '闲家'} · {self._team_label(0)}"
+                 f"{self._role_text(0)} · {self._team_label(0)}"
         )
 
         self._set_colored_text(self.trick_text, self._trick_text())

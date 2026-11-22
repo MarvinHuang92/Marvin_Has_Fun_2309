@@ -118,6 +118,28 @@ def main():
         assert app.ai_panels[seat]["note"].get("1.0", "end-1c") == "", "笔记没清空"
     print("  [6] 笔记框：三家都有、可写、新一局清空 ✓")
 
+    # 我方笔记框（全局信息）
+    hn = app.human_note
+    hn.insert("1.0", "梅花A还没出")
+    assert hn.get("1.0", "end-1c") == "梅花A还没出"
+    app._clear_notes()
+    assert hn.get("1.0", "end-1c") == "", "我方笔记没清空"
+    print("  [6b] 我方笔记框：可写、新一局清空 ✓")
+
+    # 角色文案：庄家的对家是「庄家队友」，不是「闲家」
+    g0 = app.game
+    if g0.zhuang is not None:
+        partner = (g0.zhuang + 2) % 4
+        assert app._role_text(g0.zhuang) == "庄家"
+        assert app._role_text(partner) == "庄家队友"
+        other = [s for s in range(4) if s not in (g0.zhuang, partner)][0]
+        assert app._role_text(other) == "闲家"
+        print("  [6c] 角色文案：庄家/庄家队友/闲家 ✓")
+
+    # 方位：0 南 1 东 2 北 3 西
+    assert [app._seat_dir(i) for i in range(4)] == ["南", "东", "北", "西"]
+    print("  [6d] 方位标注：南/东/北/西 ✓")
+
     # 「会搜索」这一档必须真的加载到价值网络，并且能正常出牌
     app.level_var.set("会搜索（最强 · 慢）")
     app.on_level_change()

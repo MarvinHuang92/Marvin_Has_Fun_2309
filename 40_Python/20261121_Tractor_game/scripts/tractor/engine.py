@@ -109,7 +109,8 @@ class TractorGame:
         return (seat + 1) % 4
 
     def team_name(self, team: int) -> str:
-        return "甲乙" if team == 0 else "丙丁"
+        # 用方位代替甲乙丙丁：座位 0/2 是南北，1/3 是东西
+        return "南北" if team == 0 else "东西"
 
     def seat_name(self, seat: int) -> str:
         names = ["你", "下家", "对家", "上家"]
