@@ -262,10 +262,39 @@ def state_features(state: FastState, team: int) -> List[float]:
     return _features_seat(state, team)
 
 
-ACTION_DIM = 15
+ACTION_DIM_V1 = 15
+ACTION_DIM_V2 = 20
+ACTION_DIM = ACTION_DIM_V2
 
 
-def action_features(state: FastState, seat: int, cards) -> List[float]:
+def _pair_runs(hand, level, trump):
+    """按门统计"相邻成对"的组数（连对的近似）。"""
+    by_kind = {}
+    for c in hand:
+        k = "T" if is_trump(c, level, trump) else c.suit
+        by_kind.setdefault(k, {})
+        by_kind[k][c.rank] = by_kind[k].get(c.rank, 0) + 1
+    total = 0
+    for cnt in by_kind.values():
+        ranks = sorted(r for r, n in cnt.items() if n >= 2)
+        for i in range(len(ranks) - 1):
+            if ranks[i + 1] == ranks[i] + 1:
+                total += 1
+    return total
+
+
+def _pairs(hand, level, trump):
+    """对子总数（按门不重复计）。"""
+    by_kind = {}
+    for c in hand:
+        k = "T" if is_trump(c, level, trump) else c.suit
+        by_kind.setdefault(k, {})
+        by_kind[k][c.rank] = by_kind[k].get(c.rank, 0) + 1
+    return sum(1 for cnt in by_kind.values() for n in cnt.values() if n >= 2)
+
+
+def action_features(state: FastState, seat: int, cards,
+                    version: int = 2) -> List[float]:
     """15 维动作特征。和 `_features_team` 的 60 维拼起来供优势网络使用。"""
     from .rules import build_category
 
@@ -329,7 +358,38 @@ def action_features(state: FastState, seat: int, cards) -> List[float]:
     else:
         feats.append(1.0 if is_lead else 0.0)
 
-    assert len(feats) == ACTION_DIM, len(feats)
+    if version >= 2:
+        level, trump2 = state.level, state.trump_suit
+        hand = state.hands[seat]
+        rest = [c for c in hand if c not in cards]
+        broken_pairs = max(0, _pairs(hand, level, trump2) - _pairs(rest, level, trump2))
+        broken_runs = max(0, _pair_runs(hand, level, trump2) - _pair_runs(rest, level, trump2))
+        feats.append(broken_pairs / 2.0)
+        feats.append(broken_runs / 2.0)
+
+        # 是否毙牌：领出的是副牌，我出的是主牌
+        ruff = 0.0
+        if state.lead is not None and not state.lead.category.is_trump:
+            if all(is_trump(c, level, trump2) for c in cards):
+                ruff = 1.0
+        feats.append(ruff)
+
+        # 赢余量 + 出完之后是否仍不归我方
+        margin = 0.0
+        still_losing = 0.0
+        if state.plays:
+            lead_cat = state.lead.category if state.lead is not None else None
+            cur = 0
+            for s_, played in state.plays:
+                for c in played:
+                    p = (lead_cat.power_of(c) if lead_cat is not None else 0) or 0
+                    cur = max(cur, p)
+            margin = max(0, mx - cur) / POWER_SCALE
+            still_losing = 0.0 if mx > cur else 1.0
+        feats.append(margin)
+        feats.append(still_losing)
+
+    assert len(feats) == (ACTION_DIM_V2 if version >= 2 else ACTION_DIM_V1), len(feats)
     return feats
 
 

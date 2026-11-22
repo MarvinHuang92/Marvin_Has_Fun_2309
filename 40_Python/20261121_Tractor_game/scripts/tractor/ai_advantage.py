@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import random
+from collections import Counter
 from typing import List, Optional
 
 from .cards import Card
@@ -20,10 +21,13 @@ from . import value_net
 
 class AdvantageAI:
     def __init__(self, model_path: str, seed: int = 20261124,
-                 samples: int = 1) -> None:
+                 samples: int = 1, waste_filter: bool = True) -> None:
+        self.opts = {"waste_filter": waste_filter}
         self.net = value_net.ValueNet.load(model_path)
         self.rng = random.Random(seed)
         self.samples = max(1, samples)
+        # 动作特征版本由权重维度推断：75 = 60+15(v1)，80 = 60+20(v2)
+        self.action_version = 2 if (len(self.net.w1[0]) - 60) == 20 else 1
         self.helper = None
         self.tracker = None
         self._build_helper()
@@ -55,6 +59,67 @@ class AdvantageAI:
     def bury(self, game: TractorGame, seat: int) -> List[Card]:
         return self.helper.bury(game, seat)
 
+    def _can_win(self, world, seat, cands) -> bool:
+        """这一墩我还可能赢吗（只看桌面上已经亮出来的牌）。"""
+        my_team = world.team(seat)
+        for mv in cands:
+            tmp = world.clone()
+            ok, _, res = tmp.play(seat, mv)
+            if not ok:
+                continue
+            if res is not None:
+                if world.team(res.winner) == my_team:
+                    return True
+            elif tmp.winner_so_far() == seat:
+                return True
+        return False
+
+    def _filter_waste(self, world, seat, cands):
+        """本墩结果已经不受我影响时，把候选缩到"最废的几张"。
+
+        只在这种情况下动手，其余局面完全交给网络，所以不会把 AI 写死。
+        """
+        if not world.plays:
+            return cands
+        winner = world.winner_so_far()
+        if winner is None:
+            return cands
+        my_team = world.team(seat)
+        if self._can_win(world, seat, cands):
+            return cands                      # 还可能赢，交给网络
+
+        partner_winning = world.team(winner) == my_team
+        from .cards import is_trump
+        from .rules import build_category
+
+        def card_power(c):
+            if is_trump(c, world.level, world.trump_suit):
+                cat = build_category(world.level, world.trump_suit, None)
+            else:
+                cat = build_category(world.level, world.trump_suit, c.suit)
+            return cat.power_of(c) or 0
+
+        def broken_pairs(mv) -> int:
+            hand = world.hands[seat]
+            before = Counter(c.rank for c in hand)
+            after = Counter(c.rank for c in hand if c not in mv)
+            return sum(1 for r, n in before.items()
+                       if n >= 2 and after.get(r, 0) < 2)
+
+        def waste(mv) -> float:
+            # 直接按**牌力**算，不用 _cost（那里牌力权重只有 0.05，容差会漏掉 10 点牌力差）
+            pw = sum(card_power(c) for c in mv)
+            brk = broken_pairs(mv)
+            pts = sum(5 if c.rank == 5 else (10 if c.rank in (10, 13) else 0)
+                      for c in mv)
+            # 队友赢着 -> 垫分是好事（减分）；本墩已输 -> 送分是纯亏（加分）
+            return pw + 9.0 * brk + (-3.0 if partner_winning else 4.0) * pts
+
+        vals = [waste(mv) for mv in cands]
+        best = min(vals)
+        short = [mv for mv, v in zip(cands, vals) if v <= best + 0.2]
+        return short or cands
+
     def play(self, game: TractorGame, seat: int) -> List[Card]:
         real = FastState.from_game(game)
         self.helper.sync_bottom(real, seat)
@@ -68,12 +133,16 @@ class AdvantageAI:
         if len(cands) == 1:
             return cands[0]
 
+        if self.opts.get("waste_filter", True):
+            cands = self._filter_waste(worlds[0], seat, cands)
+
         scores = [0.0] * len(cands)
         for world in worlds:
             team = world.team(seat)
             sf = value_net._features_team(world, team)
             for i, cards in enumerate(cands):
-                x = sf + value_net.action_features(world, seat, cards)
+                x = sf + value_net.action_features(world, seat, cards,
+                                                   self.action_version)
                 scores[i] += self.net.predict_features(x)
 
         best_i = max(range(len(cands)), key=lambda i: scores[i])

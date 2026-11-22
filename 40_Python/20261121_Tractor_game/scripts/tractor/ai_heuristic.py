@@ -246,20 +246,33 @@ class HeuristicAI:
 
         winner = tmp.winner_so_far()
         leading = winner is not None and st.team(winner) == my_team
+        will_win = winner == seat
         stake = tmp.points_on_table()
         val = (stake * 1.5 if leading else -stake * 1.5) if stake else 0.0
+
+        # **本墩的结果已经不受我影响**：我赢不了，或者队友已经赢着。
+        # 这种时候唯一该做的就是把最没用的牌扔掉：不送分、不动大牌、不拆对子。
+        decided = (not will_win) and winner is not None
 
         # 队友已经领先 → 尽量把分垫出去（分牌留在手里是浪费）
         if leading and winner != seat:
             val += _points(cards) * 3.0
         # 自己领先但可能被别人毙/压 → 稍微保守
-        if leading and winner == seat:
+        if leading and will_win:
             val += _points(cards) * 0.5
-        # 会浪费大牌要扣分
-        val -= self._cost(st, seat, cards)
-        # 确定最大的牌给额外奖励（兑现）
+
+        # 会浪费大牌要扣分；本墩已定时加重 3 倍
+        cost = self._cost(st, seat, cards)
+        if self.opts.get("waste_fix", True):
+            val -= cost * (3.0 if decided else 1.0)
+        else:
+            val -= cost
+
+        # 确定最大的牌给额外奖励（兑现）—— 但**只有这一手真的赢了本墩才给**。
+        # 否则会把"剩下最大的牌"扔进一个已经输掉的墩（用户实测到的就是这种）。
         if self._is_master(st, cards, tr):
-            val += 25.0
+            if not self.opts.get("waste_fix", True) or will_win:
+                val += 25.0
         if self.opts.get("lead_master") and st.lead is None:
             val += self._lead_adjust(st, seat, cards, tr)
         val += self._kitty_term(st, seat, cards, winner)

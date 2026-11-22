@@ -100,7 +100,8 @@ class AdvantagePolicy(HeuristicPolicy):
     """
 
     def __init__(self, name: str = "adv", seed: int = 20261124,
-                 model: str = "models/adv_v1.json", samples: int = 1) -> None:
+                 model: str = "models/adv_v1.json", samples: int = 1,
+                 waste_filter: bool = True) -> None:
         from pathlib import Path
 
         from .ai_advantage import AdvantageAI
@@ -108,7 +109,8 @@ class AdvantagePolicy(HeuristicPolicy):
         path = Path(model)
         if not path.is_absolute():
             path = Path(__file__).resolve().parents[2] / path
-        self.ai = AdvantageAI(str(path), seed=seed, samples=samples)
+        self.ai = AdvantageAI(str(path), seed=seed, samples=samples,
+                              waste_filter=waste_filter)
         self.name = name
 
 
@@ -377,6 +379,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="B 方搜索内部节点的跟牌候选数（2 或 4）")
     ap.add_argument("--a-adv-model", default="", help="A 方 adv 策略用的模型")
     ap.add_argument("--b-adv-model", default="", help="B 方 adv 策略用的模型")
+    ap.add_argument("--adv-waste", type=int, default=1,
+                    help="adv 策略是否启用「本墩已定只出废牌」过滤器")
+    ap.add_argument("--a-adv-waste", type=int, default=None,
+                    help="A 方 adv 是否启用废牌过滤器（覆盖 --adv-waste）")
+    ap.add_argument("--b-adv-waste", type=int, default=None,
+                    help="B 方 adv 是否启用废牌过滤器")
     ap.add_argument("--adv-samples", type=int, default=1,
                     help="adv 策略每次决策抽样几个世界做平均")
     ap.add_argument("--adv-model", default="models/adv_v1.json",
@@ -420,10 +428,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return opts
 
     def make(name, budget, samples, opts_text="", eval_kind="control",
-             follow_variants=2, adv_model=""):
+             follow_variants=2, adv_model="", adv_waste=None):
         if name == "adv":
             return AdvantagePolicy(name=name, model=adv_model or args.adv_model,
-                                   samples=args.adv_samples)
+                                   samples=args.adv_samples,
+                                   waste_filter=bool(args.adv_waste
+                                                     if adv_waste is None
+                                                     else adv_waste))
         if name == "search":
             return SearchPolicy(name=name, depth=args.depth, time_limit=budget,
                                 eval_kind=eval_kind,
@@ -448,9 +459,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("已加载价值网络：%s" % model_path)
 
     pa = make(args.a, args.time, args.samples, args.a_opts, args.a_eval,
-              args.a_follow, args.a_adv_model)
+              args.a_follow, args.a_adv_model, args.a_adv_waste)
     pb = make(args.b, t_b, s_b, args.b_opts, args.b_eval, args.b_follow,
-              args.b_adv_model)
+              args.b_adv_model, args.b_adv_waste)
     if args.self_check:
         pb = make(args.a, args.time, args.samples, args.a_opts)
 
