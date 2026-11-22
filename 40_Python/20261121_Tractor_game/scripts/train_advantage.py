@@ -19,6 +19,8 @@ def main():
     out = sys.argv[2] if len(sys.argv) > 2 else "models/adv_v1.json"
     hidden = int(sys.argv[3]) if len(sys.argv) > 3 else 128
     epochs = int(sys.argv[4]) if len(sys.argv) > 4 else 120
+    # AWR：按 exp(A/tau) 加权。tau<=0 就是普通的等权回归。
+    awr_tau = float(sys.argv[5]) if len(sys.argv) > 5 else 0.0
 
     data = np.loadtxt(src, delimiter=",", dtype=np.float64)
     x, y = data[:, :-1], data[:, -1]
@@ -38,6 +40,19 @@ def main():
     xs = (x - mu) / sd
     xt, yt = xs[tr], y[tr]
     xv, yv = xs[va], y[va]
+
+    if awr_tau > 0:
+        # 权重归一到均值 1，方便和等权版本比较
+        # **先把优势标准化**，否则 exp 会爆炸（A 跨度 ±100，tau=10 时权重到 1e8，
+        # 等于只训练几个样本，模型直接退化成垃圾）。
+        z = (y - y.mean()) / (y.std() + 1e-9)
+        w_all = np.exp(z / awr_tau)
+        w_all = w_all / w_all.mean()
+        wt, wv = w_all[tr], w_all[va]
+        print("  AWR：tau=%.1f，权重范围 %.3f ~ %.3f" % (awr_tau, w_all.min(), w_all.max()))
+    else:
+        wt = np.ones(len(tr))
+        wv = np.ones(len(va))
 
     base0 = float(np.mean((yv - 0.0) ** 2))
     A = np.hstack([xt, np.ones((len(xt), 1))])
@@ -65,7 +80,8 @@ def main():
             h_pre = xb @ w1.T + b1
             h = np.maximum(h_pre, 0)
             pred = h @ w2.T + b2
-            d = (pred - yb) * (2.0 / len(b))
+            wb = wt[b].reshape(-1, 1)
+            d = (pred - yb) * wb * (2.0 / wb.sum())
             gw2 = d.T @ h
             gb2 = d.sum(axis=0)
             dh = d @ w2
@@ -88,7 +104,7 @@ def main():
 
     h = np.maximum(xv @ w1.T + b1, 0)
     pv = (h @ w2.T + b2).ravel()
-    mse = float(np.mean((yv - pv) ** 2))
+    mse = float(np.mean(((yv - pv) ** 2) * wv) / wv.mean())
     corr = float(np.corrcoef(pv, yv)[0, 1])
     # 排序能力：同一局内能不能把好手排在前面，这里只能看整体相关
     print("最终：验证 MSE %.2f，相关系数 %.3f" % (mse, corr))
@@ -98,7 +114,8 @@ def main():
         json.dump({"w1": w1.tolist(), "b1": b1.tolist(),
                    "w2": w2.tolist(), "b2": b2.tolist(),
                    "mu": mu.tolist(), "sd": sd.tolist(),
-                   "val_mse": mse, "val_corr": corr}, f)
+                   "val_mse": mse, "val_corr": corr,
+                   "awr_tau": awr_tau}, f)
     print("已保存 -> %s" % out)
     return 0
 
