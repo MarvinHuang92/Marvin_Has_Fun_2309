@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Sequence
 from .cards import Card, card_points, is_trump
 from .fast_state import FastState
 
-FEATURE_DIM = 47
+FEATURE_DIM = 60
 KINDS = ("T", "S", "H", "C", "D")
 POWER_SCALE = 1200.0
 
@@ -33,8 +33,12 @@ def _kind_of(card: Card, level: int, trump) -> str:
 _SUIT_IDX = {"S": 0, "H": 1, "C": 2, "D": 3}
 
 
+_SUIT_IDX = {"S": 0, "H": 1, "C": 2, "D": 3}
+_RANK_SLOTS = 15            # rank 2..16
+
+
 def state_features(state: FastState, team: int) -> List[float]:
-    """47 维特征。`team` 是"我们"这一队（0 或 1）。
+    """60 维特征。`team` 是"我们"这一队（0 或 1）。
 
     性能注意：这是搜索叶子的热路径（每个节点都调），所以内联了
     is_trump / card_points 的判断，避免逐张牌的函数调用。
@@ -46,11 +50,13 @@ def state_features(state: FastState, team: int) -> List[float]:
     pt = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]]     # 分
     top = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]]    # 该门最大牌力
     tr = [0, 0]                                  # 主牌数
+    # 每个桶（队）每门每个点数出现几次，用来数对子
+    seen = [[0] * (5 * _RANK_SLOTS) for _ in range(2)]
 
-    for s in range(4):
-        bucket = 0 if (0 if s in (0, 2) else 1) == team else 1
-        nb, ptb, topb = n[bucket], pt[bucket], top[bucket]
-        for c in state.hands[s]:
+    for s_ in range(4):
+        bucket = 0 if (0 if s_ in (0, 2) else 1) == team else 1
+        nb, ptb, topb, sb = n[bucket], pt[bucket], top[bucket], seen[bucket]
+        for c in state.hands[s_]:
             r = c.rank
             suit = c.suit
             if (suit == "J") or r == level or r == 2 or (trump is not None and suit == trump):
@@ -74,6 +80,7 @@ def state_features(state: FastState, team: int) -> List[float]:
                 k = 1 + _SUIT_IDX[suit]
                 pw = r
             nb[k] += 1
+            sb[k * _RANK_SLOTS + r - 2] += 1
             if r == 5:
                 ptb[k] += 5
             elif r == 10 or r == 13:
@@ -91,6 +98,17 @@ def state_features(state: FastState, team: int) -> List[float]:
         for k in range(5):
             feats.append(1.0 if n[b][k] == 0 else 0.0)
 
+    # 每门对数（rank 出现 2 次的算一对）
+    for b in (0, 1):
+        sb = seen[b]
+        for k in range(5):
+            base = k * _RANK_SLOTS
+            pairs = 0
+            for i in range(_RANK_SLOTS):
+                if sb[base + i] >= 2:
+                    pairs += 1
+            feats.append(pairs / 3.0)
+
     zt = 0 if state.zhuang in (0, 2) else 1
     feats.append(state.points[zt] / 100.0)
     feats.append(state.points[1 - zt] / 100.0)
@@ -98,6 +116,18 @@ def state_features(state: FastState, team: int) -> List[float]:
     feats.append(1.0 if zt == team else 0.0)
     feats.append((len(state.hands[0]) + len(state.hands[1])
                   + len(state.hands[2]) + len(state.hands[3])) / 100.0)
+
+    # 本墩的态：桌上已经打出的分 + 当前谁领先 + 打了几手
+    if state.plays:
+        pot = state.points_on_table()
+        winner = state.winner_so_far()
+        feats.append(pot / 50.0)
+        feats.append(1.0 if (winner is not None and
+                             (0 if winner in (0, 2) else 1) == team) else -1.0)
+        feats.append(len(state.plays) / 4.0)
+    else:
+        feats.extend((0.0, 0.0, 0.0))
+
     assert len(feats) == FEATURE_DIM, len(feats)
     return feats
 

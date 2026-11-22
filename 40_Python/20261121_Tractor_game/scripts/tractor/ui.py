@@ -308,7 +308,22 @@ class TractorApp:
                 self.track_state[(seat, group, key)] = False
                 self.track_buttons[(seat, group, key)] = btn
 
+        # 自由笔记：给自己写"这家可能没黑桃了"之类的备忘。
+        # 程序不读也不校验，只是记事本；新开一局自动清空。
+        note = tk.Text(box, height=2, width=22, wrap="word", bd=1, relief="solid",
+                       font=("Microsoft YaHei", 9), bg="#fffde7", fg="#3e2723",
+                       insertbackground="#3e2723")
+        note.pack(fill="x", padx=6, pady=(0, 5))
+        self.ai_panels[seat]["note"] = note
+
     # ------------------------------------------------------------- helpers
+    def _clear_notes(self) -> None:
+        """新的一局开始，把三个笔记框清空。"""
+        for panel in self.ai_panels.values():
+            note = panel.get("note")
+            if note is not None:
+                note.delete("1.0", "end")
+
     def _team_label(self, seat: int) -> str:
         return "你方" if self.game.team(seat) == 0 else "对方"
 
@@ -366,6 +381,7 @@ class TractorApp:
             self._reset_tracks()
             self.track_deal_no = g.deal_no
             self.ai_engine.begin_deal(g)
+            self._clear_notes()
 
         self._update_track_buttons()
 

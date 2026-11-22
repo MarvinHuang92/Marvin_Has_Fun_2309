@@ -348,7 +348,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--b-eval", default="control",
                     choices=["rank", "control", "value"],
                     help="B 方搜索用的估价模型")
-    ap.add_argument("--value-model", default="models/value_v1.json",
+    ap.add_argument("--value-model", default="models/value_v4.json",
                     help="eval=value 时加载的价值网络")
     ap.add_argument("--a-opts", default="", help="A 方启发式开关，如 bury_void=1,lead_master=1")
     ap.add_argument("--b-opts", default="", help="B 方启发式开关")

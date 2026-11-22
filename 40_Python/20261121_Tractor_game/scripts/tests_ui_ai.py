@@ -99,6 +99,17 @@ def main():
     assert right <= win_right, "强度下拉框超出窗口右边界（%d > %d）" % (right, win_right)
     print("  [5] 强度下拉框布局正常（右边界 %d <= 窗口 %d）" % (right, win_right))
 
+    # 笔记框：三家都有、能写、清空有效
+    for seat in (1, 2, 3):
+        note = app.ai_panels[seat].get("note")
+        assert note is not None, "座位 %d 没有笔记框" % seat
+        note.insert("1.0", "测试笔记%d" % seat)
+    assert app.ai_panels[2]["note"].get("1.0", "end-1c") == "测试笔记2"
+    app._clear_notes()
+    for seat in (1, 2, 3):
+        assert app.ai_panels[seat]["note"].get("1.0", "end-1c") == "", "笔记没清空"
+    print("  [6] 笔记框：三家都有、可写、新一局清空 ✓")
+
     root.destroy()
     print("-" * 60)
     print("全部通过")
