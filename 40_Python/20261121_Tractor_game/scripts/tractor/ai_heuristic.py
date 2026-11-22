@@ -53,7 +53,10 @@ class HeuristicAI:
             "use_bottom": True,      # 我是最后埋底的人时，用确知的底牌收紧推断
             # 按人工思路埋底（保存确定最强的牌型 + 埋最弱一门 + 主牌阈值）
             "bury_smart": True,
-            # 防御性埋底：某门的两张级牌我一张都没有时，**降低**这门"埋断"的优先级
+            # 埋底搜索：在前 K 张里枚举 C(K,8)，用价值网络挑（0 = 关闭，用纯启发式）
+            "bury_search_k": 0,
+            "bury_search_samples": 2,   # 定约采样的世界数
+            # 防御性埋底：某门的两级牌我一张都没有时，**降低**这门"埋断"的优先级
             # （对手可能用这对级牌反主这门，我埋掉的牌就白送了）。
             # 是"降优先级"而不是"禁止" —— 没有更好的门时仍然会造这个缺门。
             "bury_defense_penalty": 6,
@@ -200,6 +203,8 @@ class HeuristicAI:
 
     # ------------------------------------------------------------------ 埋底
     def bury(self, game: TractorGame, seat: int) -> List[Card]:
+        if self.opts.get("bury_search_k", 0):
+            return self._bury_search(game, seat)
         if self.opts.get("bury_smart", False):
             return self._bury_smart(game, seat)
         pool = list(game.hands[seat]) + list(game.bottom)
@@ -250,8 +255,11 @@ class HeuristicAI:
         return chosen
 
     # ------------------------------------------------------- 埋底（人工思路版）
-    def _bury_smart(self, game: TractorGame, seat: int) -> List[Card]:
-        """按"保存确定最强的牌型 + 埋最弱一门"来埋底。规则见模块文档。"""
+    def _bury_scores(self, game: TractorGame, seat: int) -> List[Card]:
+        """给 33 张打分，返回**从最该埋到最不该埋**。
+
+        规则见 `_bury_smart` 的文档；埋底搜索也用这个排序取 top-K。
+        """
         pool = list(game.hands[seat]) + list(game.bottom)
         level, trump = game.level, game.trump_suit
         trump_min = self.opts.get("bury_trump_min", 10)
@@ -366,8 +374,62 @@ class HeuristicAI:
             v -= c.rank * 2
             return v
 
-        ordered = sorted(pool, key=bury_score, reverse=True)
-        return ordered[:8]
+        return sorted(pool, key=bury_score, reverse=True)
+
+    def _bury_smart(self, game: TractorGame, seat: int) -> List[Card]:
+        """启发式埋底：直接埋掉打分最高的 8 张。"""
+        return self._bury_scores(game, seat)[:8]
+
+    # ------------------------------------------------- 埋底搜索（top-K + 枚举）
+    def _bury_search(self, game: TractorGame, seat: int) -> List[Card]:
+        """在启发式打分的前 K 张里**枚举所有 C(K,8) 种埋法**，用价值网络挑最好的。
+
+        评估 = "埋完之后，我这队从现在到局末的期望净得分"；对手手牌做几次定约采样。
+        这样能把"逐张打分看不出来的组合效应"（造断门 vs 保留甩牌型）算进去。
+        """
+        from itertools import combinations
+
+        from . import value_net
+
+        net = value_net.active()
+        if net is None:
+            return self._bury_scores(game, seat)[:8]
+
+        K = int(self.opts.get("bury_search_k", 14))
+        ranked = self._bury_scores(game, seat)
+        if K < 8 or len(ranked) < 33:
+            return ranked[:8]
+        samples = max(1, int(self.opts.get("bury_search_samples", 2)))
+        team = game.team(seat)
+
+        # 定约采样：对手手牌的几种可能（我这 33 张之外的牌怎么分）
+        worlds = []
+        try:
+            from .search import determinize
+            base = FastState.from_game(game)
+            for _ in range(samples):
+                worlds.append(determinize(base, seat, self.rng, self.tracker))
+        except Exception:
+            return ranked[:8]
+        if not worlds:
+            return ranked[:8]
+
+        # 注意用**下标**而不是牌本身：两副牌里有两张一模一样的牌，用值比较会出错
+        best_idx = tuple(range(8))
+        best_val = None
+        for combo in combinations(range(K), 8):
+            picked = [ranked[i] for i in combo]
+            rest = [ranked[i] for i in range(33) if i not in combo]
+            total = 0.0
+            for w in worlds:
+                w.hands[seat] = rest
+                w.bottom = picked
+                total += net.predict(w, team)
+            val = total / len(worlds)
+            if best_val is None or val > best_val:
+                best_val = val
+                best_idx = combo
+        return [ranked[i] for i in best_idx]
 
     def note_buried(self, seat: int, cards) -> None:
         """**真的把牌埋下去了**才调用（提示算法算出的不算）。
