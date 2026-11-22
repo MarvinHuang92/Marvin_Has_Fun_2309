@@ -51,6 +51,8 @@ class HeuristicAI:
             "keep_pairs": False,     # 拆对子扣分（对子在拖拉机里很贵）
             "trump_void": True,      # 用「领主牌没跟」推断某人缺主牌
             "use_bottom": True,      # 我是最后埋底的人时，用确知的底牌收紧推断
+            # 反主要等庄家埋完底再反（为了拿到换底，而不是只换主牌花色）
+            "bid_wait_bury": False,
             # 「牌权」值多少分：赢下一个没分的墩本身没收益，但能拿到下一轮的领出权。
             # 注意 _cost 里主牌成本约 45 分，所以这个数要同量级才有意义；
             # 80 以上会饱和（等价于"只要能赢就赢"）。1500 局 A/B 实测 +0.055±0.038。
@@ -126,6 +128,15 @@ class HeuristicAI:
             if mode == "conservative" and strength(best) < self.opts.get("bid_min", 26.0):
                 return None                  # 手牌不够硬就先过，别硬抢庄
             return best
+
+        # **等庄家埋完底再反主**（bid_wait_bury）。
+        # 在 `bid_initial` 反主只会改主牌花色，庄家照常自己埋底 —— 等于把
+        # **换底**的机会浪费掉了。改到 `bid_extra`（庄家已经埋完）再反主，
+        # 就能拿底牌重新埋 8 张：造断门、加强副牌，而且庄家不知道你断了哪门。
+        if (self.opts.get("bid_wait_bury", False)
+                and game.phase == "bid_initial"
+                and game.team(cur.seat) != game.team(seat)):
+            return None
         if cur.seat == seat:
             streng = [b for b in bids if b.strengthen]
             if streng:
