@@ -51,6 +51,10 @@ class HeuristicAI:
             "keep_pairs": False,     # 拆对子扣分（对子在拖拉机里很贵）
             "trump_void": True,      # 用「领主牌没跟」推断某人缺主牌
             "use_bottom": True,      # 我是最后埋底的人时，用确知的底牌收紧推断
+            # 「牌权」值多少分：赢下一个没分的墩本身没收益，但能拿到下一轮的领出权。
+            # 注意 _cost 里主牌成本约 45 分，所以这个数要同量级才有意义；
+            # 80 以上会饱和（等价于"只要能赢就赢"）。1500 局 A/B 实测 +0.055±0.038。
+            "tempo": 80.0,
             "kitty_aware": True,     # 最后一墩考虑抠底倍数（x1~x64）
             "bid_mode": "basic",     # basic / trump / conservative（见 _trump_strength）
             "bid_min": 26.0,         # conservative 模式的开门门槛
@@ -273,6 +277,19 @@ class HeuristicAI:
         if self._is_master(st, cards, tr):
             if not self.opts.get("waste_fix", True) or will_win:
                 val += 25.0
+
+        # **牌权**：赢下一个没分的墩本身没收益，但能拿到下一轮的领出权。
+        # 人类玩家会为了"抢牌权"去打一个零分墩（好兑现手里的拖拉机/甩牌，
+        # 或者测试对方的主牌强度）。这里用一个**可调的软奖励**近似它，
+        # 而不是写死"必须抢" —— 大牌的成本仍然由 _cost 扣，所以不会乱花。
+        tempo = self.opts.get("tempo", 0.0)
+        if tempo:
+            # "抢牌权"= 出手前是对方领先，出手后变成我领先。
+            # （注意不能用 `not leading`：will_win 本身就蕴含 leading，那样条件永远不成立。）
+            prev_winner = st.winner_so_far() if st.plays else None
+            if (will_win and prev_winner is not None
+                    and st.team(prev_winner) != my_team):
+                val += tempo
         if self.opts.get("lead_master") and st.lead is None:
             val += self._lead_adjust(st, seat, cards, tr)
         val += self._kitty_term(st, seat, cards, winner)
