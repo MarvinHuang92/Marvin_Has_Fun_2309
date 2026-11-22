@@ -310,10 +310,12 @@ class TractorApp:
 
         # 自由笔记：给自己写"这家可能没黑桃了"之类的备忘。
         # 程序不读也不校验，只是记事本；新开一局自动清空。
-        note = tk.Text(box, height=2, width=22, wrap="word", bd=1, relief="solid",
+        # 放在 content 的第 1 行（紧贴记录按钮下面），剩余高度留给下面的空行。
+        note = tk.Text(content, height=2, width=22, wrap="word", bd=1, relief="solid",
                        font=("Microsoft YaHei", 9), bg="#fffde7", fg="#3e2723",
                        insertbackground="#3e2723")
-        note.pack(fill="x", padx=6, pady=(0, 5))
+        note.grid(row=1, column=0, columnspan=2, sticky="ew", padx=4, pady=(6, 0))
+        content.rowconfigure(2, weight=1)
         self.ai_panels[seat]["note"] = note
 
     # ------------------------------------------------------------- helpers
