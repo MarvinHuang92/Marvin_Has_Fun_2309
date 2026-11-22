@@ -17,12 +17,15 @@ from . import ai as rule_ai
 from .cards import Card
 from .engine import Bid, TractorGame
 
-LEVELS = ("rule", "heuristic", "adv", "search")
+# 界面下拉框里能选的档位。
+# 「会搜索」已经去掉：强度没比会推理高，但要慢 80 倍，性价比不划算。
+# 代码仍然保留（`AiEngine("search")` 可用），评测台里也还能跑。
+LEVELS = ("rule", "heuristic", "adv")
+ALL_KINDS = LEVELS + ("search",)
 LEVEL_NAMES = {
     "rule": "简单（原始规则）",
     "heuristic": "会记牌（推荐）",
     "adv": "会推理（强 · 快）",
-    "search": "会搜索（最强 · 慢）",
 }
 
 # 界面各档用的模型（相对项目根目录 models/）
@@ -36,7 +39,7 @@ class AiEngine:
     """一个门面：界面按这个接口调用即可。"""
 
     def __init__(self, kind: str = "heuristic", search_ms: int = 100) -> None:
-        self.kind = kind if kind in LEVELS else "heuristic"
+        self.kind = kind if kind in ALL_KINDS else "heuristic"
         self.search_ms = search_ms
         self._brain = None
         self._search = None
@@ -100,7 +103,7 @@ class AiEngine:
         return False
 
     def set_kind(self, kind: str) -> None:
-        self.kind = kind if kind in LEVELS else self.kind
+        self.kind = kind if kind in ALL_KINDS else self.kind
         self._build()
 
     # ---------------------------------------------------------------- 生命周期

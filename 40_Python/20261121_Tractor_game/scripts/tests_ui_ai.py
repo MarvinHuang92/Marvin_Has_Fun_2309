@@ -12,7 +12,7 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT / "scripts"))
 
-from tractor.ai_select import LEVELS, AiEngine  # noqa: E402
+from tractor.ai_select import LEVELS, LEVEL_NAMES, AiEngine  # noqa: E402
 from tractor.ui import TractorApp  # noqa: E402
 
 
@@ -107,6 +107,13 @@ def main():
     assert right <= win_right, "强度下拉框超出窗口右边界（%d > %d）" % (right, win_right)
     print("  [5] 强度下拉框布局正常（右边界 %d <= 窗口 %d）" % (right, win_right))
 
+    # 下拉框里只剩下三档（会搜索已去掉）
+    vals = list(app.level_box["values"])
+    assert len(vals) == 3, "下拉框应该只有三档，实际 %r" % (vals,)
+    assert "会搜索（最强 · 慢）" not in vals, "会搜索档没去掉"
+    assert vals == [LEVEL_NAMES[k] for k in LEVELS]
+    print("  [5b] 强度下拉框只有三档：%s ✓" % " / ".join(vals))
+
     # 笔记框：三家都有、能写、清空有效
     for seat in (1, 2, 3):
         note = app.ai_panels[seat].get("note")
@@ -141,19 +148,6 @@ def main():
     print("  [6d] 方位标注：南/东/北/西 ✓")
 
     # 「会搜索」这一档必须真的加载到价值网络，并且能正常出牌
-    app.level_var.set("会搜索（最强 · 慢）")
-    app.on_level_change()
-    assert app.ai_engine.kind == "search"
-    from tractor import value_net
-
-    net = value_net.active()
-    assert net is not None, "「会搜索」档没有加载价值网络"
-    app.on_next()                       # 开下一局
-    g2 = app.game
-    steps = play_one_deal(app, g2, max_plays=8)
-    print("  [7] 搜索档加载价值网络（%d 维特征），出 8 手不炸（%d 步）✓"
-          % (len(net.w1[0]), steps))
-
     # 「会推理」= 优势网络
     app.level_var.set("会推理（强 · 快）")
     app.on_level_change()
@@ -163,7 +157,7 @@ def main():
     assert isinstance(app.ai_engine._brain, AdvantageAI), "会推理档没换成优势网络"
     app.on_next()
     steps = play_one_deal(app, app.game, max_plays=8)
-    print("  [8] 会推理档（优势网络，%d 维输入）出 8 手正常（%d 步）✓"
+    print("  [7] 会推理档（优势网络，%d 维输入）出 8 手正常（%d 步）✓"
           % (len(app.ai_engine._brain.net.w1[0]), steps))
 
     root.destroy()
