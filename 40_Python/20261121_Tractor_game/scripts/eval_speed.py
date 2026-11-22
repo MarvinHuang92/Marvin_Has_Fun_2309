@@ -43,7 +43,7 @@ while sum(len(state.hands[s]) for s in range(4)) > 32:
     state.play(seat, mv)
 
 net_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "..", "models", "value_v3.json")
+                        "..", "models", "value_v6_256.json")
 value_net.load_active(net_path)
 
 N = 3000

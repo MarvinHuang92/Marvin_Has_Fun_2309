@@ -25,13 +25,19 @@ def check_engines():
         print("  [1] 档位 %-10s 构建正常" % kind)
 
 
-def play_one_deal(app, g) -> int:
-    """用界面自己的 ai_step 跑完一局，人类那一家由引擎代打。"""
+def play_one_deal(app, g, max_plays: int = 10 ** 9) -> int:
+    """用界面自己的 ai_step 跑完一局，人类那一家由引擎代打。
+
+    `max_plays` 给定时，出够这么多手就停（用来只验证接线）。
+    """
     root = app.root
     steps = 0
+    plays = 0
     while steps < 4000:
         steps += 1
         root.update()
+        if plays >= max_plays:
+            break
         if g.phase in ("settle", "match_over"):
             break
 
@@ -59,10 +65,12 @@ def play_one_deal(app, g) -> int:
             if not ok:
                 raise RuntimeError("人类代打失败：%s" % msg)
             app.ai_engine.observe(g, 0, cards, lead)
+            plays += 1
             app.refresh()
             continue
 
         app.ai_step()
+        plays += 1
     return steps
 
 
@@ -109,6 +117,20 @@ def main():
     for seat in (1, 2, 3):
         assert app.ai_panels[seat]["note"].get("1.0", "end-1c") == "", "笔记没清空"
     print("  [6] 笔记框：三家都有、可写、新一局清空 ✓")
+
+    # 「会搜索」这一档必须真的加载到价值网络，并且能正常出牌
+    app.level_var.set("会搜索（最强 · 慢）")
+    app.on_level_change()
+    assert app.ai_engine.kind == "search"
+    from tractor import value_net
+
+    net = value_net.active()
+    assert net is not None, "「会搜索」档没有加载价值网络"
+    app.on_next()                       # 开下一局
+    g2 = app.game
+    steps = play_one_deal(app, g2, max_plays=8)
+    print("  [7] 搜索档加载价值网络（%d 维特征），出 8 手不炸（%d 步）✓"
+          % (len(net.w1[0]), steps))
 
     root.destroy()
     print("-" * 60)

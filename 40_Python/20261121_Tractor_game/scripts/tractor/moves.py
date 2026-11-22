@@ -284,7 +284,9 @@ def _fast_leads(state, seat: int, limit: int) -> List[List[Card]]:
     return _dedupe(out)[:limit]
 
 
-def _fast_follows(state, seat: int, limit: int) -> List[List[Card]]:
+def _fast_follows(state, seat: int, limit: int,
+                  variants: int = 2) -> List[List[Card]]:
+    """跟牌候选。variants=2 是原来的"全低/全高"，4 会再加两个混合方案。"""
     from .rules import match_slots
 
     lead: LeadPattern = state.lead
@@ -312,11 +314,17 @@ def _fast_follows(state, seat: int, limit: int) -> List[List[Card]]:
 
     req = match_slots(hand_cat, lead.slots, cat, require_all=False, allow_partial=True)
     fillable = [i for i, r in enumerate(req) if r is not None]
-    for high in (False, True):
+    # (首个槽位是否取高, 其余槽位是否取高)
+    if variants >= 4 and len(fillable) >= 2:
+        plans = ((False, False), (True, True), (False, True), (True, False))
+    else:
+        plans = ((False, False), (True, True))
+    for first_high, rest_high in plans:
         pool = list(hand_cat)
         chosen: List[Card] = []
         ok = True
-        for i in fillable:
+        for pos, i in enumerate(fillable):
+            high = first_high if pos == 0 else rest_high
             comp = _pick_slot(pool, lead.slots[i], cat, high)
             if comp is None:
                 ok = False
@@ -338,8 +346,9 @@ def card_rank_key(c: Card) -> float:
     return float(c.rank)
 
 
-def legal_moves_fast(state, seat: int, limit: int = 8) -> List[List[Card]]:
+def legal_moves_fast(state, seat: int, limit: int = 8,
+                     follow_variants: int = 2) -> List[List[Card]]:
     """搜索中间节点用的少量候选（不是全枚举，但都是合法构造）。"""
     if state.lead is None:
         return _fast_leads(state, seat, limit)
-    return _fast_follows(state, seat, limit)
+    return _fast_follows(state, seat, limit, follow_variants)

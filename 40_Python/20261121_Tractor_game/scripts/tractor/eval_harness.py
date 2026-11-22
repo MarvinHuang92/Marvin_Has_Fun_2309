@@ -98,13 +98,14 @@ class SearchPolicy(Policy):
 
     def __init__(self, name: str = "search", seed: int = 20261122,
                  depth: int = 10, time_limit: float = 0.05,
-                 eval_kind: str = "control"):
+                 eval_kind: str = "control", follow_variants: int = 2):
         from .ai_heuristic import HeuristicAI
         from .ai_search import SearchAI
 
         self.ai = HeuristicAI(rng=random.Random(seed))
         self.brain = SearchAI(depth=depth, time_limit=time_limit, seed=seed,
-                              eval_kind=eval_kind)
+                              eval_kind=eval_kind,
+                              follow_variants=follow_variants)
         self.name = name
 
     def begin_deal(self, game):
@@ -136,13 +137,14 @@ class PIMCPolicy(Policy):
 
     def __init__(self, name: str = "pimc", seed: int = 20261122,
                  depth: int = 40, time_limit: float = 0.03, samples: int = 4,
-                 eval_kind: str = "control"):
+                 eval_kind: str = "control", follow_variants: int = 2):
         from .ai_heuristic import HeuristicAI
         from .ai_pimc import PIMCAI
 
         self.ai = HeuristicAI(rng=random.Random(seed))
         self.brain = PIMCAI(depth=depth, time_limit=time_limit,
-                            samples=samples, seed=seed, eval_kind=eval_kind)
+                            samples=samples, seed=seed, eval_kind=eval_kind,
+                            follow_variants=follow_variants)
         self.name = name
 
     def begin_deal(self, game):
@@ -302,6 +304,7 @@ def compare(p0: Policy, p1: Policy, deals: int, seed_base: int = 700000) -> Dict
     m, ci = mean_ci(deltas)
     return {
         "deals": len(deltas),
+        "per_deal": deltas,
         "a_delta": (m, ci),
         "as_dealer": mean_ci(scores_as_dealer) if scores_as_dealer else (0.0, 0.0),
         "as_dealer_n": len(scores_as_dealer),
@@ -348,6 +351,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--b-eval", default="control",
                     choices=["rank", "control", "value"],
                     help="B 方搜索用的估价模型")
+    ap.add_argument("--a-follow", type=int, default=2,
+                    help="A 方搜索内部节点的跟牌候选数（2 或 4）")
+    ap.add_argument("--b-follow", type=int, default=2,
+                    help="B 方搜索内部节点的跟牌候选数（2 或 4）")
+    ap.add_argument("--dump", default="", help="把逐局 a_delta 写到这个文件（做配对比较）")
     ap.add_argument("--value-model", default="models/value_v4.json",
                     help="eval=value 时加载的价值网络")
     ap.add_argument("--a-opts", default="", help="A 方启发式开关，如 bury_void=1,lead_master=1")
@@ -385,13 +393,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             opts[k] = v
         return opts
 
-    def make(name, budget, samples, opts_text="", eval_kind="rank"):
+    def make(name, budget, samples, opts_text="", eval_kind="control",
+             follow_variants=2):
         if name == "search":
             return SearchPolicy(name=name, depth=args.depth, time_limit=budget,
-                                eval_kind=eval_kind)
+                                eval_kind=eval_kind,
+                                follow_variants=follow_variants)
         if name == "pimc":
             return PIMCPolicy(name=name, depth=args.depth, time_limit=budget,
-                              samples=samples, eval_kind=eval_kind)
+                              samples=samples, eval_kind=eval_kind,
+                              follow_variants=follow_variants)
         if name in ("heuristic", "heuristic2"):
             return HeuristicPolicy(name=name, opts=parse_opts(opts_text))
         return REGISTRY[name]()
@@ -407,13 +418,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         value_net.load_active(str(model_path))
         print("已加载价值网络：%s" % model_path)
 
-    pa = make(args.a, args.time, args.samples, args.a_opts, args.a_eval)
-    pb = make(args.b, t_b, s_b, args.b_opts, args.b_eval)
+    pa = make(args.a, args.time, args.samples, args.a_opts, args.a_eval,
+              args.a_follow)
+    pb = make(args.b, t_b, s_b, args.b_opts, args.b_eval, args.b_follow)
     if args.self_check:
         pb = make(args.a, args.time, args.samples, args.a_opts)
 
     stats = compare(pa, pb, args.deals, args.seed)
     report(pa, pb, stats)
+    if args.dump:
+        with open(args.dump, "w", encoding="utf-8") as f:
+            for i, d in enumerate(stats["per_deal"]):
+                f.write("%d,%.4f\n" % (i, d))
+        print("逐局结果已写入：%s" % args.dump)
     return 0
 
 

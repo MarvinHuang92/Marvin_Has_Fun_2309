@@ -21,8 +21,11 @@ LEVELS = ("rule", "heuristic", "search")
 LEVEL_NAMES = {
     "rule": "简单（原始规则）",
     "heuristic": "会记牌（推荐）",
-    "search": "会搜索（很慢）",
+    "search": "会搜索（最强 · 慢）",
 }
+
+# 界面「会搜索」这一档用的价值网络（相对项目根目录）
+VALUE_MODEL = "value_v4.json"
 
 
 class AiEngine:
@@ -45,9 +48,35 @@ class AiEngine:
         self._brain = HeuristicAI()
         if self.kind == "search":
             from .ai_search import SearchAI
-            self._search = SearchAI(depth=40, time_limit=self.search_ms / 1000.0)
+            from .value_net import load_active
+
+            eval_kind = "value" if self._load_value_model() else "control"
+            self._search = SearchAI(depth=40, time_limit=self.search_ms / 1000.0,
+                                    eval_kind=eval_kind)
         else:
             self._search = None
+
+    def _load_value_model(self) -> bool:
+        """加载价值网络；失败就退回手写估价（界面不能因为这个崩）。"""
+        import os
+        from pathlib import Path
+
+        from . import value_net
+
+        if value_net.active() is not None:
+            return True
+        root = Path(__file__).resolve().parents[2]
+        for name in (VALUE_MODEL, "value_v4.json"):
+            path = Path(name)
+            if not path.is_absolute():
+                path = root / "models" / path.name
+            if os.path.exists(path):
+                try:
+                    value_net.load_active(str(path))
+                    return True
+                except Exception:
+                    return False
+        return False
 
     def set_kind(self, kind: str) -> None:
         self.kind = kind if kind in LEVELS else self.kind

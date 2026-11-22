@@ -265,13 +265,16 @@ class _Timeout(Exception):
 class Searcher:
     def __init__(self, depth: int = 10, time_limit: float = 0.05,
                  node_limit: int = 60000, validate: bool = False,
-                 eval_kind: str = "control") -> None:
+                 eval_kind: str = "control",
+                 follow_variants: int = 2) -> None:
         self.max_depth = depth
         self.time_limit = time_limit
         self.node_limit = node_limit
         # validate=True 只用于测试：核对「跳过校验」和「逐手校验」结果一致
         self.validate = validate
         self.eval_kind = eval_kind
+        # 内部节点的跟牌候选数：2 = 只试最便宜/最贵，4 = 再加两个混合方案
+        self.follow_variants = follow_variants
         self.tt: Dict[Tuple, float] = {}
         self.move_cache: Dict[Tuple, List[List[Card]]] = {}
         self.nodes = 0
@@ -402,7 +405,8 @@ class Searcher:
         cand = self.move_cache.get(key)
         if cand is None:
             if fast:
-                cand = moves_mod.legal_moves_fast(st, seat, limit=8)
+                cand = moves_mod.legal_moves_fast(st, seat, limit=8,
+                                                  follow_variants=self.follow_variants)
             else:
                 cand = moves_mod.legal_moves(st, seat, max_moves=80)
             cand.sort(key=lambda mv: sum(c.rank for c in mv))

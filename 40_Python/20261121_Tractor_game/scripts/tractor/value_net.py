@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Sequence
 from .cards import Card, card_points, is_trump
 from .fast_state import FastState
 
-FEATURE_DIM = 60
+FEATURE_DIM = 133
 KINDS = ("T", "S", "H", "C", "D")
 POWER_SCALE = 1200.0
 
@@ -41,20 +41,138 @@ _SUIT_IDX = {"S": 0, "H": 1, "C": 2, "D": 3}
 _RANK_SLOTS = 15            # rank 2..16
 
 
-def state_features(state: FastState, team: int) -> List[float]:
-    """60 维特征。`team` 是"我们"这一队（0 或 1）。
+_SUIT_IDX = {"S": 0, "H": 1, "C": 2, "D": 3}
+_RANK_SLOTS = 15            # rank 2..16
 
-    性能注意：这是搜索叶子的热路径（每个节点都调），所以内联了
-    is_trump / card_points 的判断，避免逐张牌的函数调用。
+
+def _seat_groups(team: int):
+    """返回 (我方两个座位, 对方两个座位)，各自按座位号排序。"""
+    ours = [s for s in range(4) if (0 if s in (0, 2) else 1) == team]
+    theirs = [s for s in range(4) if (0 if s in (0, 2) else 1) != team]
+    return ours, theirs
+
+
+def _features_seat(state: FastState, team: int) -> List[float]:
+    """**v2 布局**：133 维，按座位拆开。`team` 是"我们"这一队（0 或 1）。
+
+    和 v1 的区别：**按座位拆开**而不是按队合并。
+    "下家缺♠"和"对家缺♠"对决策是不同的，按队合并就把这个区别丢掉了。
+
+    性能注意：这是搜索叶子的热路径，所以内联了 is_trump / card_points 的判断。
     """
     level = state.level
     trump = state.trump_suit
 
-    n = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]]      # 张数
-    pt = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]]     # 分
-    top = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]]    # 该门最大牌力
-    tr = [0, 0]                                  # 主牌数
-    # 每个桶（队）每门每个点数出现几次，用来数对子
+    n = [[0] * 5 for _ in range(4)]        # 每个座位每门张数
+    pt = [[0] * 5 for _ in range(4)]       # 每个座位每门分
+    top = [[0] * 5 for _ in range(4)]      # 每个座位每门最大牌力
+    tr = [0] * 4                            # 每个座位主牌数
+    seen = [[0] * (5 * _RANK_SLOTS) for _ in range(4)]
+
+    for s_ in range(4):
+        nb, ptb, topb, sb = n[s_], pt[s_], top[s_], seen[s_]
+        for c in state.hands[s_]:
+            r = c.rank
+            suit = c.suit
+            if (suit == "J") or r == level or r == 2 or (trump is not None and suit == trump):
+                k = 0
+                tr[s_] += 1
+                if r == 16:
+                    pw = 1000
+                elif r == 15:
+                    pw = 999
+                elif suit == trump and r == level:
+                    pw = 998
+                elif r == level:
+                    pw = 997
+                elif suit == trump and r == 2:
+                    pw = 996
+                elif r == 2:
+                    pw = 995
+                else:
+                    pw = 900 + r
+            else:
+                k = 1 + _SUIT_IDX[suit]
+                pw = r
+            nb[k] += 1
+            sb[k * _RANK_SLOTS + r - 2] += 1
+            if r == 5:
+                ptb[k] += 5
+            elif r == 10 or r == 13:
+                ptb[k] += 10
+            if pw > topb[k]:
+                topb[k] = pw
+
+    # 每座位每门的对数 + 最长连对（连续的点数都成对）
+    pairs = [[0] * 5 for _ in range(4)]
+    runs = [[0] * 5 for _ in range(4)]
+    for s_ in range(4):
+        sb = seen[s_]
+        for k in range(5):
+            base = k * _RANK_SLOTS
+            best_run = 0
+            cur_run = 0
+            for i in range(_RANK_SLOTS):
+                if sb[base + i] >= 2:
+                    pairs[s_][k] += 1
+                    cur_run += 1
+                    if cur_run > best_run:
+                        best_run = cur_run
+                else:
+                    cur_run = 0
+            runs[s_][k] = best_run
+
+    ours, theirs = _seat_groups(team)
+
+    feats: List[float] = []
+    for s_ in list(ours) + list(theirs):
+        for k in range(5):
+            feats.append(n[s_][k] / 10.0)
+            feats.append(pt[s_][k] / 50.0)
+            feats.append(top[s_][k] / POWER_SCALE)
+        for k in range(5):
+            feats.append(pairs[s_][k] / 3.0)
+        for k in range(5):
+            feats.append(runs[s_][k] / 3.0)
+        feats.append(tr[s_] / 10.0)
+        for k in range(5):
+            feats.append(1.0 if n[s_][k] == 0 else 0.0)
+
+    zt = 0 if state.zhuang in (0, 2) else 1
+    feats.append(state.points[zt] / 100.0)
+    feats.append(state.points[1 - zt] / 100.0)
+    feats.append(state.trick_no / 25.0)
+    feats.append(1.0 if zt == team else 0.0)
+    feats.append((len(state.hands[0]) + len(state.hands[1])
+                  + len(state.hands[2]) + len(state.hands[3])) / 100.0)
+
+    if state.plays:
+        pot = state.points_on_table()
+        winner = state.winner_so_far()
+        feats.append(pot / 50.0)
+        feats.append(1.0 if (winner is not None and
+                             (0 if winner in (0, 2) else 1) == team) else -1.0)
+        feats.append(len(state.plays) / 4.0)
+    else:
+        feats.extend((0.0, 0.0, 0.0))
+
+    # 现在轮到我方出牌吗
+    cp = state.current_player
+    feats.append(1.0 if (0 if cp in (0, 2) else 1) == team else 0.0)
+
+    assert len(feats) == FEATURE_DIM_V2, len(feats)
+    return feats
+
+
+def _features_team(state: FastState, team: int) -> List[float]:
+    """**v1 布局**：60 维，按队合并（更便宜，约 30 微秒）。"""
+    level = state.level
+    trump = state.trump_suit
+
+    n = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]]
+    pt = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]]
+    top = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]]
+    tr = [0, 0]
     seen = [[0] * (5 * _RANK_SLOTS) for _ in range(2)]
 
     for s_ in range(4):
@@ -101,8 +219,6 @@ def state_features(state: FastState, team: int) -> List[float]:
         feats.append(tr[b] / 10.0)
         for k in range(5):
             feats.append(1.0 if n[b][k] == 0 else 0.0)
-
-    # 每门对数（rank 出现 2 次的算一对）
     for b in (0, 1):
         sb = seen[b]
         for k in range(5):
@@ -121,7 +237,6 @@ def state_features(state: FastState, team: int) -> List[float]:
     feats.append((len(state.hands[0]) + len(state.hands[1])
                   + len(state.hands[2]) + len(state.hands[3])) / 100.0)
 
-    # 本墩的态：桌上已经打出的分 + 当前谁领先 + 打了几手
     if state.plays:
         pot = state.points_on_table()
         winner = state.winner_so_far()
@@ -132,8 +247,19 @@ def state_features(state: FastState, team: int) -> List[float]:
     else:
         feats.extend((0.0, 0.0, 0.0))
 
-    assert len(feats) == FEATURE_DIM, len(feats)
+    assert len(feats) == FEATURE_DIM_V1, len(feats)
     return feats
+
+
+FEATURE_DIM_V1 = 60
+FEATURE_DIM_V2 = 133
+# 默认用哪套特征（数据生成脚本用这个）
+FEATURE_DIM = FEATURE_DIM_V2
+
+
+def state_features(state: FastState, team: int) -> List[float]:
+    """默认布局（v2，133 维）。老的 v1 模型请用 ValueNet.predict。"""
+    return _features_seat(state, team)
 
 
 try:                       # 可选加速：有 numpy 就用，没有也能跑
@@ -188,7 +314,11 @@ class ValueNet:
         return out
 
     def predict(self, state: FastState, team: int) -> float:
-        return self.predict_features(state_features(state, team))
+        # 特征布局由权重维度推断：60 -> v1（按队），133 -> v2（按座位）
+        dim = len(self.w1[0])
+        if dim == FEATURE_DIM_V1:
+            return self.predict_features(_features_team(state, team))
+        return self.predict_features(_features_seat(state, team))
 
 
 # ---------------------------------------------------------------------------
