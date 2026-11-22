@@ -22,10 +22,10 @@ import random
 from typing import List, Optional, Sequence, Tuple
 
 from . import moves
-from .cards import Card, card_points, is_trump, power
+from .cards import SUITS, Card, card_points, is_trump, make_deck, power
 from .engine import Bid, TractorGame
 from .fast_state import FastState
-from .rules import bottom_multiplier, decompose_lead
+from .rules import bottom_multiplier, build_category, decompose_lead
 from .memory import CardTracker, card_id
 
 POINT_RANKS = (5, 10, 13)
@@ -51,6 +51,14 @@ class HeuristicAI:
             "keep_pairs": False,     # 拆对子扣分（对子在拖拉机里很贵）
             "trump_void": True,      # 用「领主牌没跟」推断某人缺主牌
             "use_bottom": True,      # 我是最后埋底的人时，用确知的底牌收紧推断
+            # 按人工思路埋底（保存确定最强的牌型 + 埋最弱一门 + 主牌阈值）
+            "bury_smart": True,
+            # 出牌时朝断门方向垫牌（配合 AAK/AKK 这类牌型）
+            # 垫牌朝断门：实测中性（w=6 → +0.001±0.059），权重加大反而有害
+            # （w=20 → +0.030、w=60 → +0.058，正数=不开的那方赢）。默认关。
+            "void_seek": False,
+            "void_seek_w": 6.0,      # 垫牌朝断门的权重（每"少一张"给多少分）
+            "bury_trump_min": 10,    # 主牌少于这个数就不许扣主牌（平均 9.72）
             # 反主要等庄家埋完底再反（为了拿到换底，而不是只换主牌花色）。
             # 实测强度中性（1500 局 +0.012±0.039），但**行为上更合理**：
             # 开着它 AI 才会真的换底（约 33% 的局），便于观察它的埋底习惯。
@@ -158,6 +166,8 @@ class HeuristicAI:
 
     # ------------------------------------------------------------------ 埋底
     def bury(self, game: TractorGame, seat: int) -> List[Card]:
+        if self.opts.get("bury_smart", False):
+            return self._bury_smart(game, seat)
         pool = list(game.hands[seat]) + list(game.bottom)
         level, trump = game.level, game.trump_suit
         groups: dict = {}
@@ -204,6 +214,106 @@ class HeuristicAI:
         chosen.extend(rest[: max(0, 8 - len(chosen))])
         chosen = chosen[:8]
         return chosen
+
+    # ------------------------------------------------------- 埋底（人工思路版）
+    def _bury_smart(self, game: TractorGame, seat: int) -> List[Card]:
+        """按"保存确定最强的牌型 + 埋最弱一门"来埋底。规则见模块文档。"""
+        pool = list(game.hands[seat]) + list(game.bottom)
+        level, trump = game.level, game.trump_suit
+        trump_min = self.opts.get("bury_trump_min", 10)
+
+        cat_t = build_category(level, trump, None)
+        cats = {s: build_category(level, trump, s) for s in SUITS}
+
+        def kind_of(c):
+            return "T" if is_trump(c, level, trump) else c.suit
+
+        def power_of(c):
+            k = kind_of(c)
+            return (cat_t if k == "T" else cats[k]).power_of(c) or 0
+
+        # 不在我手里（33 张之外）的那些牌，每门的最大牌力 —— 用来判断"我这张是不是顶"
+        mine = {card_id(c) for c in pool}
+        unseen_max: dict = {}
+        for c in make_deck():
+            if card_id(c) in mine:
+                continue
+            k = kind_of(c)
+            unseen_max[k] = max(unseen_max.get(k, 0), power_of(c))
+
+        def is_top(c):
+            # 用 >= ：单张 A 的另一张副本必然在别人手里，但**同点数不构成压制**，
+            # 所以"没人在我上面"就够了（用 > 会永远判 False，把 A 埋掉）。
+            return power_of(c) >= unseen_max.get(kind_of(c), 0)
+
+        # 每个 (花色,点数) 我持有几张
+        cnt: dict = {}
+        for c in pool:
+            cnt[(c.suit, c.rank)] = cnt.get((c.suit, c.rank), 0) + 1
+
+        trumps = [c for c in pool if is_trump(c, level, trump)]
+        n_trump = len(trumps)
+
+        # ---- 是否允许埋分数：手上有大王，或有"已知最大的"小王对/级牌对，且主牌够多
+        big_joker = any(c.rank == 16 for c in pool)
+        top_small_pair = any(
+            c.rank == 15 and cnt.get((c.suit, c.rank), 0) >= 2 for c in pool
+        ) or any(
+            c.rank == level and is_trump(c, level, trump)
+            and cnt.get((c.suit, c.rank), 0) >= 2 and is_top(c)
+            for c in pool
+        )
+        allow_points = n_trump > trump_min and (big_joker or top_small_pair)
+
+        by_suit: dict = {}
+        for c in pool:
+            by_suit.setdefault(kind_of(c), []).append(c)
+
+        # ---- 找"最弱一门"：副牌、张数最少、没有确定最强的牌
+        weakest = None
+        for k, cards in by_suit.items():
+            if k == "T":
+                continue
+            if any(is_top(c) for c in cards):
+                continue
+            if weakest is None or len(cards) < len(by_suit[weakest]):
+                weakest = k
+
+        # ---- 给每张牌算"该埋的程度"（越大越先埋）
+        def bury_score(c) -> float:
+            k = kind_of(c)
+            v = 0.0
+            # 级牌 / 主牌：基本不动；主牌超过阈值时也排在最后
+            if c.rank == level and is_trump(c, level, trump):
+                return -1e6
+            if is_trump(c, level, trump):
+                v -= 400 if n_trump <= trump_min else 120
+            # 确定最强的牌：留住
+            if is_top(c):
+                v -= 300
+            # 对子：拆对子要付代价；没有保护的 KK/1010 反而优先拆/埋
+            if cnt.get((c.suit, c.rank), 0) >= 2:
+                same_suit_pairs = [r for (s_, r), n in cnt.items()
+                                   if s_ == c.suit and n >= 2 and r != c.rank]
+                if same_suit_pairs:
+                    v -= 20          # 有别的对子保护 → 留着
+                else:
+                    v += 15          # 裸对子（KK/1010 这种）→ 优先埋
+            # 分数：默认留（负分）；允许时反而优先埋（正分）
+            if card_points(c) > 0:
+                v += 40 if allow_points else -80
+            # 大牌（J/Q/K）要留住 —— 用户的原话是"数量多就扣掉其中的小牌、保留大牌"
+            if not is_trump(c, level, trump) and c.rank >= 11:
+                v -= 50
+            # 最弱一门 → 整门优先埋掉，造缺门（但只对小牌生效，不能把大牌带走）
+            if weakest is not None and k == weakest:
+                v += 30
+            # 点数小的更容易埋
+            v -= c.rank * 2
+            return v
+
+        ordered = sorted(pool, key=bury_score, reverse=True)
+        return ordered[:8]
 
     def note_buried(self, seat: int, cards) -> None:
         """**真的把牌埋下去了**才调用（提示算法算出的不算）。
@@ -331,6 +441,25 @@ class HeuristicAI:
             if (will_win and prev_winner is not None
                     and st.team(prev_winner) != my_team):
                 val += tempo
+        if self.opts.get("void_seek", True) and st.lead is not None:
+            # **朝断门方向垫牌**：我是垫牌（领出这门我一张都没有）时，
+            # 优先从"剩得最少"的那门里垫 —— 早点把这门垫光，之后就能用主牌毙，
+            # AAK / AKK 这类牌型才真正发挥得出来。
+            lead_kind = "T" if st.lead.category.is_trump else st.lead.category.suit
+
+            def _k(x):
+                return "T" if is_trump(x, st.level, st.trump_suit) else x.suit
+
+            hand_kinds = {_k(x) for x in st.hands[seat]}
+            if lead_kind not in hand_kinds:
+                for c in cards:
+                    k = _k(c)
+                    if k == "T":
+                        continue
+                    n = sum(1 for x in st.hands[seat] if _k(x) == k)
+                    if n <= 3:
+                        val += (4 - n) * self.opts.get("void_seek_w", 6.0)
+
         if self.opts.get("lead_master") and st.lead is None:
             val += self._lead_adjust(st, seat, cards, tr)
         val += self._kitty_term(st, seat, cards, winner)
