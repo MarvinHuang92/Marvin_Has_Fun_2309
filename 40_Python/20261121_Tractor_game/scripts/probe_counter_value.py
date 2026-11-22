@@ -61,7 +61,7 @@ def drive(seed: int, force_step: int = -1, force_action: str = "", verbose=False
                 bid = ai.bid(game, seat)
                 # 记录第一次"能反且是对方亮的主"的机会
                 if (force_step == -1 and fork_info is None and cur is not None
-                        and game.phase == "bid_extra"      # 只取"埋完之后"的机会，
+                        and game.phase == FORK_PHASE       # 在哪一阶段分叉
                         and game.team(cur.seat) != game.team(seat) and counters):
                     took = bid is not None and bid.level > cur.level
                     want = "ai_counter" if took else "ai_pass"
@@ -109,11 +109,13 @@ def drive(seed: int, force_step: int = -1, force_action: str = "", verbose=False
 
 
 WHICH = "ai_counter"
+FORK_PHASE = "bid_extra"
 
 
 def main():
-    global WHICH
+    global WHICH, FORK_PHASE
     WHICH = sys.argv[2] if len(sys.argv) > 2 else "ai_counter"
+    FORK_PHASE = sys.argv[3] if len(sys.argv) > 3 else "bid_extra"
     deals = int(sys.argv[1]) if len(sys.argv) > 1 else 200
     diffs_pts = []
     diffs_delta = []
@@ -152,8 +154,11 @@ def main():
     pos = sum(1 for x in diffs_pts if x > 0)
     neg = sum(1 for x in diffs_pts if x < 0)
     print("=" * 70)
-    label = ("AI 本来就会反的机会" if WHICH == "ai_counter"
-             else "AI 本来会放弃、但其实能反的机会")
+    label = ("AI 本来就会反" if WHICH == "ai_counter" else "AI 本来会放弃")
+    if FORK_PHASE == "bid_initial":
+        label += " · bid_initial（只换主牌色、**不换底**）"
+    else:
+        label += " · bid_extra（反主 + **换底**）"
     print("反主的单次决策反事实 —— %s（%d 局）" % (label, n))
     print("=" * 70)
     print("  反主方那一队的得分差：%+.1f 分 ±%.1f（正 = 反了更好）" % (m, ci))
