@@ -56,6 +56,8 @@ class HeuristicAI:
             # 埋底搜索：在前 K 张里枚举 C(K,8)，用价值网络挑（0 = 关闭，用纯启发式）
             "bury_search_k": 0,
             "bury_search_samples": 2,   # 定约采样的世界数
+            # 最后一墩按倍数兑现抠底（闲家用对子/拖拉机领最后一墩，底牌分翻倍）
+            "last_trick_mult": False,
             # 防御性埋底：某门的两级牌我一张都没有时，**降低**这门"埋断"的优先级
             # （对手可能用这对级牌反主这门，我埋掉的牌就白送了）。
             # 是"降优先级"而不是"禁止" —— 没有更好的门时仍然会造这个缺门。
@@ -509,6 +511,7 @@ class HeuristicAI:
             return -1e9
 
         my_team = st.team(seat)
+
         if result is not None:
             # 这一手直接结束本墩
             win = st.team(result.winner) == my_team
@@ -544,6 +547,37 @@ class HeuristicAI:
         if self._is_master(st, cards, tr):
             if not self.opts.get("waste_fix", True) or will_win:
                 val += 25.0
+
+        # **最后一墩的抠底倍数**：最后一墩按"领出牌型"算倍数（单张 ×1、对子 ×2、
+        # k 连对 ×2^k，封顶 64）。所以：
+        #   - 我是闲家、领最后一墩时，用**对子/拖拉机**能赢就赢 → 底牌分翻倍；
+        #   - 我是庄家队、领最后一墩时，别送倍数给闲家（除非那是确定最大的牌型）。
+        # 注意"最后一墩"的判据**不能**用 trick_no >= 24：
+        # 前面有人甩牌/出对子时墩数会少，trick_no 到不了 24（实测只有 71/120 局
+        # 能走到 24，而那些局最后一墩每人正好 1 张，根本不可能领对子）。
+        # 正确判据是"这一墩打完所有人手里都空了"= 其他人手里的牌 ≤ 我要领的张数。
+        if self.opts.get("last_trick_mult", False) and st.lead is None:
+            others_max = max((len(st.hands[x]) for x in range(4) if x != seat),
+                             default=0)
+            is_last = others_max <= len(cards)
+        else:
+            is_last = False
+        if is_last:
+            pat = decompose_lead(cards, st.level, st.trump_suit)
+            if pat is not None:
+                mult = bottom_multiplier(pat)
+                if mult > 1:
+                    # 底牌分：只在我确知底牌时用真值（我自己最后埋的），否则用经验均值
+                    kitty = 14.0
+                    mine = self._my_buried.get(seat)
+                    if mine:
+                        kitty = float(sum(card_points(c) for c in mine))
+                    master = self._is_master(st, cards, tr)
+                    if st.team(st.zhuang) != my_team:
+                        if master:
+                            val += (mult - 1) * kitty
+                    elif not master:
+                        val -= (mult - 1) * kitty * 0.5
 
         # **牌权**：赢下一个没分的墩本身没收益，但能拿到下一轮的领出权。
         # 人类玩家会为了"抢牌权"去打一个零分墩（好兑现手里的拖拉机/甩牌，
