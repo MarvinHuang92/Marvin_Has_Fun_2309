@@ -22,6 +22,7 @@ from .cards import (
     SUIT_SYMBOLS,
     Card,
     card_points,
+    is_trump,
     rank_label,
     sort_hand,
 )
@@ -517,7 +518,25 @@ class TractorApp:
 
         cards = sort_hand(cards, g.level, g.trump_suit)
         bottom_set = set(g.bottom) if self._human_pending_bury() else set()
-        for i, c in enumerate(cards):
+
+        # 按花色分组，组间插一个"空白格"，宽度约等于一张牌。
+        items = []          # (是否间隔, 牌)
+        prev_kind = None
+        for c in cards:
+            kind = "T" if is_trump(c, g.level, g.trump_suit) else c.suit
+            if prev_kind is not None and kind != prev_kind:
+                items.append((True, None))
+            prev_kind = kind
+            items.append((False, c))
+
+        cols = 14           # 13 张牌 + 1 个间隔位
+        for i, (is_gap, c) in enumerate(items):
+            row, col = i // cols, i % cols
+            if is_gap:
+                gap = tk.Frame(self.hand_inner, bg="#ffffff", width=46, height=1)
+                gap.grid(row=row, column=col, padx=1, pady=1, sticky="ns")
+                gap.grid_propagate(False)
+                continue
             selected = c in self.selected
             if selected:
                 bg = "#ffe082"
@@ -532,8 +551,8 @@ class TractorApp:
                 activebackground="#ffecb3", relief="raised", bd=1,
                 command=lambda card=c: self.on_card(card),
             )
-            btn.grid(row=i // 13, column=i % 13, padx=1, pady=1, sticky="nsew")
-        for col in range(13):
+            btn.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
+        for col in range(cols):
             self.hand_inner.columnconfigure(col, weight=1)
 
     def _render_bids(self) -> None:

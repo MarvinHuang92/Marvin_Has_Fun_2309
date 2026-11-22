@@ -114,6 +114,29 @@ def main():
     assert vals == [LEVEL_NAMES[k] for k in LEVELS]
     print("  [5b] 强度下拉框只有三档：%s ✓" % " / ".join(vals))
 
+    # 手牌按花色分组：相邻两组之间必须有一个空白格
+    import tkinter as _tk
+    app.on_next()               # 上一局已经打完了，开新的一局才有手牌
+    app.refresh()
+    g0 = app.game
+    kids = app.hand_inner.winfo_children()
+    frames = [w for w in kids if isinstance(w, _tk.Frame)]
+    buttons = [w for w in kids if isinstance(w, _tk.Button)]
+    cards = sorted((app._display_cards()), key=lambda c: 0)
+    kinds = []
+    for c in cards:
+        from tractor.cards import is_trump
+        k = "T" if is_trump(c, g0.level, g0.trump_suit) else c.suit
+        if not kinds or kinds[-1] != k:
+            kinds.append(k)
+    expect_gaps = max(0, len(kinds) - 1)
+    assert len(frames) == expect_gaps, (
+        "花色间隔数不对：%d 组应有 %d 个间隔，实际 %d"
+        % (len(kinds), expect_gaps, len(frames)))
+    assert len(buttons) == len(cards)
+    print("  [5c] 手牌花色分组：%d 组、%d 个空白间隔、%d 张牌 ✓"
+          % (len(kinds), len(frames), len(buttons)))
+
     # 笔记框：三家都有、能写、清空有效
     for seat in (1, 2, 3):
         note = app.ai_panels[seat].get("note")
