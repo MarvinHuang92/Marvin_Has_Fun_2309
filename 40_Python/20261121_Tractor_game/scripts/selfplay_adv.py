@@ -77,7 +77,7 @@ def play_one(seed, ai, net):
     for sf, af, team, p_me, p_them in rows:
         r = (final[team] - p_me) - (final[1 - team] - p_them)
         v = net.predict_features(sf)
-        out.append((sf, af, r - v))
+        out.append((sf, af, r - v, r))
     return out
 
 
@@ -89,16 +89,27 @@ def main():
 
     net = value_net.ValueNet.load(model)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    ai = AiEngine("heuristic")
+    policy = sys.argv[5] if len(sys.argv) > 5 else "heuristic"
+    if policy.startswith("adv:"):
+        from tractor.ai_advantage import AdvantageAI
+
+        adv_model = policy[4:]
+        if not os.path.isabs(adv_model):
+            adv_model = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     "..", "models", adv_model)
+        ai = AdvantageAI(adv_model, samples=4)
+        print("用优势 AI 产数据：%s" % adv_model)
+    else:
+        ai = AiEngine("heuristic")
 
     t0 = time.time()
     written = 0
     with open(out_path, "w", encoding="utf-8") as f:
         for i in range(n):
             rows = play_one(seed0 + i, ai, net)
-            for sf, af, a in rows:
+            for sf, af, a, r in rows:
                 f.write(",".join("%.3f" % v for v in list(sf) + list(af)))
-                f.write(",%.3f\n" % a)
+                f.write(",%.3f,%.3f\n" % (a, r))
                 written += 1
             if (i + 1) % 500 == 0:
                 print("  %d/%d 局，%d 条（%.0fs）"

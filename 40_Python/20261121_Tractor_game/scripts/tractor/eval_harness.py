@@ -375,6 +375,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="A 方搜索内部节点的跟牌候选数（2 或 4）")
     ap.add_argument("--b-follow", type=int, default=2,
                     help="B 方搜索内部节点的跟牌候选数（2 或 4）")
+    ap.add_argument("--a-adv-model", default="", help="A 方 adv 策略用的模型")
+    ap.add_argument("--b-adv-model", default="", help="B 方 adv 策略用的模型")
     ap.add_argument("--adv-samples", type=int, default=1,
                     help="adv 策略每次决策抽样几个世界做平均")
     ap.add_argument("--adv-model", default="models/adv_v1.json",
@@ -418,9 +420,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return opts
 
     def make(name, budget, samples, opts_text="", eval_kind="control",
-             follow_variants=2):
+             follow_variants=2, adv_model=""):
         if name == "adv":
-            return AdvantagePolicy(name=name, model=args.adv_model,
+            return AdvantagePolicy(name=name, model=adv_model or args.adv_model,
                                    samples=args.adv_samples)
         if name == "search":
             return SearchPolicy(name=name, depth=args.depth, time_limit=budget,
@@ -446,8 +448,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("已加载价值网络：%s" % model_path)
 
     pa = make(args.a, args.time, args.samples, args.a_opts, args.a_eval,
-              args.a_follow)
-    pb = make(args.b, t_b, s_b, args.b_opts, args.b_eval, args.b_follow)
+              args.a_follow, args.a_adv_model)
+    pb = make(args.b, t_b, s_b, args.b_opts, args.b_eval, args.b_follow,
+              args.b_adv_model)
     if args.self_check:
         pb = make(args.a, args.time, args.samples, args.a_opts)
 
