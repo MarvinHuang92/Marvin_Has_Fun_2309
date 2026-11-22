@@ -21,8 +21,9 @@ from . import value_net
 
 class AdvantageAI:
     def __init__(self, model_path: str, seed: int = 20261124,
-                 samples: int = 1, waste_filter: bool = True) -> None:
-        self.opts = {"waste_filter": waste_filter}
+                 samples: int = 1, waste_filter: bool = True,
+                 no_ruff_zero: bool = True) -> None:
+        self.opts = {"waste_filter": waste_filter, "no_ruff_zero": no_ruff_zero}
         self.net = value_net.ValueNet.load(model_path)
         self.rng = random.Random(seed)
         self.samples = max(1, samples)
@@ -85,6 +86,22 @@ class AdvantageAI:
         if winner is None:
             return cands
         my_team = world.team(seat)
+
+        # 零分墩别用主牌毙：赢了也没有收益，只是白烧一张主牌。
+        # 只有"我缺门、还有副牌能垫"时才这么限制。
+        if self.opts.get("no_ruff_zero", True):
+            from .cards import is_trump
+
+            lead_cat = world.lead.category
+            if (not lead_cat.is_trump and world.points_on_table() == 0
+                    and world.team(winner) != my_team):
+                if not any(lead_cat.contains(c) for c in world.hands[seat]):
+                    non_trump = [mv for mv in cands
+                                 if not all(is_trump(c, world.level, world.trump_suit)
+                                            for c in mv)]
+                    if non_trump:
+                        cands = non_trump
+
         if self._can_win(world, seat, cands):
             return cands                      # 还可能赢，交给网络
 
