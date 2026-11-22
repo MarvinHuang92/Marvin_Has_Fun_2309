@@ -3,3 +3,5 @@ __pycache__/
 cfg/window.json
 logs/
 data/*.json
+
+game_log/

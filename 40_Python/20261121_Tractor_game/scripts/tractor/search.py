@@ -238,6 +238,14 @@ def evaluate(state: FastState, team: int, kind: str = "control") -> float:
     两者共用主牌控制 / 缺门 / 本墩分三项。
     这是**截断用的近似**，不追求精确；深度够时它会被真实搜索覆盖。
     """
+    if kind == "value":
+        from . import value_net
+
+        net = value_net.active()
+        if net is not None:
+            return net.predict(state, team)
+        kind = "control"                  # 没加载模型就退回二元控制
+
     by_kind, team_has = _scan_by_kind(state)
     if not by_kind:
         return 0.0

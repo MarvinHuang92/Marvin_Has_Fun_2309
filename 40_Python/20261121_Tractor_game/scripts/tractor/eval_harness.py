@@ -342,10 +342,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--time-b", type=float, default=None, help="B 方的时间预算（默认同 --time）")
     ap.add_argument("--samples", type=int, default=4, help="PIMC 采样的世界数（A 方）")
     ap.add_argument("--samples-b", type=int, default=None, help="B 方的世界数")
-    ap.add_argument("--a-eval", default="rank", choices=["rank", "control"],
+    ap.add_argument("--a-eval", default="control",
+                    choices=["rank", "control", "value"],
                     help="A 方搜索用的估价模型")
-    ap.add_argument("--b-eval", default="rank", choices=["rank", "control"],
+    ap.add_argument("--b-eval", default="control",
+                    choices=["rank", "control", "value"],
                     help="B 方搜索用的估价模型")
+    ap.add_argument("--value-model", default="models/value_v1.json",
+                    help="eval=value 时加载的价值网络")
     ap.add_argument("--a-opts", default="", help="A 方启发式开关，如 bury_void=1,lead_master=1")
     ap.add_argument("--b-opts", default="", help="B 方启发式开关")
     args = ap.parse_args(argv)
@@ -391,6 +395,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if name in ("heuristic", "heuristic2"):
             return HeuristicPolicy(name=name, opts=parse_opts(opts_text))
         return REGISTRY[name]()
+
+    if "value" in (args.a_eval, args.b_eval):
+        from pathlib import Path
+
+        from . import value_net
+
+        model_path = Path(args.value_model)
+        if not model_path.is_absolute():
+            model_path = Path(__file__).resolve().parents[2] / model_path
+        value_net.load_active(str(model_path))
+        print("已加载价值网络：%s" % model_path)
 
     pa = make(args.a, args.time, args.samples, args.a_opts, args.a_eval)
     pb = make(args.b, t_b, s_b, args.b_opts, args.b_eval)
