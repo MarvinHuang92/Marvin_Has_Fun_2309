@@ -83,7 +83,7 @@ def main() -> int:
         if not got:
             ok_count += 1
         elif len(bad_examples) < 3:
-            bad_examples.append([c.short for c in got])
+            bad_examples.append([c.label for c in got])
     print("  [3] 缺门约束（%s）：50 次采样里 %d 次没发%s给缺门者" % (banned, ok_count, banned))
     if bad_examples:
         print("      违规样例：%s" % bad_examples)

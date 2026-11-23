@@ -65,15 +65,15 @@ def main():
                           % (d, st.trick_no, seat, len(cands_f), len(legal_f),
                              len(cands_s), len(legal_s)))
                     print("  领出：%s  [%s]"
-                          % (",".join(c.short for c in lead.cards),
+                          % (",".join(c.label for c in lead.cards),
                              ",".join("%s(%s)" % (s.kind, s.length)
                                       for s in lead.slots)))
                     print("  领出类别：%s，需要 %d 张" % (cat.name, len(lead.cards)))
                     print("  手上：(%d 张) %s"
                           % (len(st.hands[seat]),
-                             " ".join(c.short for c in st.hands[seat])))
+                             " ".join(c.label for c in st.hands[seat])))
                     print("  该门手牌 %d 张：%s"
-                          % (len(hand_cat), " ".join(c.short for c in hand_cat)))
+                          % (len(hand_cat), " ".join(c.label for c in hand_cat)))
                     print("  该门对子数：%d" % pair_count(hand_cat, cat))
                     req = match_slots(hand_cat, lead.slots, cat,
                                       require_all=False, allow_partial=True)
@@ -83,7 +83,7 @@ def main():
                         ok, why = is_legal_follow(st.hands[seat], mv, st.lead,
                                                   st.level, st.trump_suit)
                         print("    候选 %s -> %s"
-                              % (",".join(c.short for c in mv), why or "ok"))
+                              % (",".join(c.label for c in mv), why or "ok"))
                     if bad >= 3:
                         return 1
             cards = ai.play(g, seat)

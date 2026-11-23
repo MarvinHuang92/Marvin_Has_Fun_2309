@@ -76,8 +76,8 @@ def main():
         if mv_fast is None or mv_deep is None:
             continue
 
-        k_fast = tuple(sorted(c.short for c in mv_fast))
-        k_deep = tuple(sorted(c.short for c in mv_deep))
+        k_fast = tuple(sorted(c.label for c in mv_fast))
+        k_deep = tuple(sorted(c.label for c in mv_deep))
         if k_fast == k_deep:
             same += 1
             print("  局面%2d 两者选同一手（跳过）" % i)

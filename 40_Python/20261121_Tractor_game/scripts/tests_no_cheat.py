@@ -92,7 +92,7 @@ def drive_to_decision(kind: str, seed: int, skip_plays: int):
         c1 = ai1.play(g1, seat)
         random.seed(20261124)
         c2 = ai2.play(g2, seat)
-        assert sorted(c.short for c in c1) == sorted(c.short for c in c2), \
+        assert sorted(c.label for c in c1) == sorted(c.label for c in c2), \
             "两个同步局面下同一 AI 给出不同决策（说明它本身不确定）"
         ok, msg = _apply(g1, seat, c1, lead is None)
         assert ok, msg
@@ -110,7 +110,7 @@ def _public_key(game):
     """所有玩家都能看到的信息：出过的牌、比分、当前这墩、墩数、级别/主花色。"""
     trick = ()
     if game.trick is not None:
-        trick = tuple((s, tuple(c.short for c in cards)) for s, cards in game.trick.plays)
+        trick = tuple((s, tuple(c.label for c in cards)) for s, cards in game.trick.plays)
     return (game.trick_no, game.declarer_points, game.defender_points,
             game.level, game.trump_suit, trick,
             tuple(len(game.hands[s]) for s in range(4)))
@@ -151,8 +151,8 @@ def audit(kind: str, deals: int = 3, points: int = 8) -> int:
             # 公开状态必须一致，否则这次比较无效
             assert _public_key(g1) == _public_key(g2), "两个局面在比较前就不同步了"
             assert (len(g1.hands[seat]) == len(g2.hands[seat])), "我的手牌张数变了"
-            assert sorted(c.short for c in g1.hands[seat]) == \
-                sorted(c.short for c in g2.hands[seat]), "我的手牌内容变了"
+            assert sorted(c.label for c in g1.hands[seat]) == \
+                sorted(c.label for c in g2.hands[seat]), "我的手牌内容变了"
 
             # rule 用的是全局 random，比较前重设同一个种子，保证随机性一致
             random.seed(20261125)
@@ -160,8 +160,8 @@ def audit(kind: str, deals: int = 3, points: int = 8) -> int:
             random.seed(20261125)
             mv2 = ai2.play(g2, seat)
             total += 1
-            k1 = sorted(c.short for c in mv1)
-            k2 = sorted(c.short for c in mv2)
+            k1 = sorted(c.label for c in mv1)
+            k2 = sorted(c.label for c in mv2)
             if k1 != k2:
                 bad += 1
                 print("  !! %s 第%d局第%d点 决策随对手手牌变化：%s -> %s"
@@ -207,12 +207,12 @@ def audit_bottom(kind: str, deals: int = 3, points: int = 8) -> int:
             random.seed(20261125)
             mv2 = ai2.play(g2, seat)
             total += 1
-            if sorted(c.short for c in mv1) != sorted(c.short for c in mv2):
+            if sorted(c.label for c in mv1) != sorted(c.label for c in mv2):
                 bad += 1
                 print("  !! %s 第%d局第%d点 **底牌泄漏**：%s -> %s"
                       % (kind, d, k,
-                         sorted(c.short for c in mv1),
-                         sorted(c.short for c in mv2)))
+                         sorted(c.label for c in mv1),
+                         sorted(c.label for c in mv2)))
     print("  %-10s 底牌审计 %d 个决策，可疑 %d 个" % (kind, total, bad))
     return bad
 

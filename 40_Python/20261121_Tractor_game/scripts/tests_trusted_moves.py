@@ -66,7 +66,7 @@ def main():
             if mv_a is not None:
                 assert sorted(mv_a) == sorted(mv_b), (
                     "跳过校验改变了选出的动作：%s vs %s"
-                    % ([c.short for c in mv_a], [c.short for c in mv_b]))
+                    % ([c.label for c in mv_a], [c.label for c in mv_b]))
             assert abs(val_a - val_b) < 1e-6, "跳过校验改变了估值"
             checked += 1
 

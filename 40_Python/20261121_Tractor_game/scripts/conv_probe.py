@@ -96,7 +96,7 @@ def main():
             s = Searcher(depth=40, time_limit=b, node_limit=10 ** 7,
                          eval_kind="value")
             mv, val = s.choose(world.clone(), seat)
-            moves.append(None if mv is None else tuple(sorted(c.short for c in mv)))
+            moves.append(None if mv is None else tuple(sorted(c.label for c in mv)))
             values.append(val if val is not None else float("nan"))
             nodes.append(s.nodes)
 
