@@ -448,6 +448,23 @@ def _contains_all(hand: Sequence[Card], play: Sequence[Card]) -> bool:
     return all(cid in play_ids for cid in hand_ids) and len(play_ids) == len(set(play_ids))
 
 
+def pair_count(cards: Sequence[Card], cat: Category) -> int:
+    """这些牌里能组成几个**对子**（同花色同点数两张算一个，不同点数分开数）。
+
+    2 副牌里每个 (花色,点数) 只有 2 张，所以每个点数最多 1 个对子。
+    主牌里同一个"槽位"（比如主级牌 vs 副级牌）才算同一对，用 `cat.slot_of` 区分。
+    """
+    # **必须按 (花色,点数) 判对子**，不能用槽位：主牌类别里同一个槽位
+    # （副 2 / 副级牌）会横跨多个花色，用槽位会把 ♥2+♦2 误判成一对。
+    cnt: Dict[Tuple[str, int], int] = {}
+    for c in cards:
+        if cat.slot_of(c) is None:
+            continue
+        key = (c.suit, c.rank)
+        cnt[key] = cnt.get(key, 0) + 1
+    return sum(n // 2 for n in cnt.values())
+
+
 def is_legal_follow(
     hand: Sequence[Card],
     play: Sequence[Card],
@@ -482,6 +499,21 @@ def is_legal_follow(
         for i, r in enumerate(req):
             if r is not None and act[i] is None:
                 return False, f"必须跟出{lead.slots[i].label()}"
+
+        # **半条容易漏的规则**：拖拉机/对子领出时，如果凑不出同款（比如没有拖拉机），
+        # 也**必须优先把手里的对子垫出去**，凑不够再用单张。
+        # 早先只检查了"能不能凑出槽位"，凑不出就完全不要求 —— 于是手里有对子
+        # 也可以全出单张（用户 2026-11-23 人工对局发现，第 7 局第 4 墩）。
+        slot_pairs = 0
+        for sl in lead.slots:
+            if sl.kind == "pair":
+                slot_pairs += 1
+            elif sl.kind == "tractor":
+                slot_pairs += sl.length
+        if slot_pairs:
+            need = min(slot_pairs, pair_count(hand_cat, cat))
+            if pair_count(play_cat, cat) < need:
+                return False, "有对子时必须先跟对子"
         return True, ""
 
     if len(hand_cat) > 0:

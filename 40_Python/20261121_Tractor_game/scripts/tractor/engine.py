@@ -422,14 +422,17 @@ class TractorGame:
             blocker, beatable = throw_blocker(seat, self.hands, pattern, self.level, self.trump_suit)
             if blocker is not None:
                 forced = forced_component(pattern, beatable)
+                intended = [c.label for c in cards]
                 self.throw_blockers.append({
                     "thrower": seat,
                     "blocker": blocker,
+                    "intended": intended,     # 原本想甩的牌（用户要能看见）
                     "forced": forced.label(),
                 })
                 self.last_throw_info = {
                     "thrower": seat,
                     "blocker": blocker,
+                    "intended": intended,
                     "forced": forced.label(),
                 }
                 forced_cards = list(forced.cards)
@@ -440,9 +443,13 @@ class TractorGame:
                 self.trick.lead = forced_pattern
                 self.trick.plays.append((seat, forced_cards))
                 self._compute_void_seats(forced_pattern)
+                # 记录里要同时给出"原本想甩什么"和"实际出了什么"
+                # （用户 2026-11-23 反馈：只看"改出什么"没法回顾自己/电脑想干什么）
                 self.add_log(
-                    f"{self.seat_name(seat)} 甩牌被 {self.seat_name(blocker)} 卡住，"
-                    f"改出 {forced.label()}。"
+                    f"{self.seat_name(seat)} 想甩 "
+                    f"{', '.join(c.label for c in cards)}，"
+                    f"被 {self.seat_name(blocker)} 卡住，"
+                    f"改出 {', '.join(c.label for c in forced_cards)}。"
                 )
                 self.current_player = self.next_seat(seat)
                 return True, ""

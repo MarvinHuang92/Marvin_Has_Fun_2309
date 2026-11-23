@@ -22,7 +22,7 @@ from __future__ import annotations
 from itertools import combinations
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from .cards import Card, category_of, pairs_in
+from .cards import Card, card_points, category_of, is_trump, pairs_in
 from .rules import (
     Category,
     LeadPattern,
@@ -209,6 +209,20 @@ def legal_follows(state, seat: int, *, max_moves: int = 256) -> List[List[Card]]
             need = n - len(filled)
             if need < 0:
                 continue
+            # **先给一个"凑够对子"的构造**：组合枚举有 max_moves 上限，
+            # 是按字典序截断的，很可能把"含对子"的组合全部截掉，于是下面
+            # `is_legal_follow` 一过滤就变成 0 个合法动作（实测过）。
+            from .rules import pair_count as _pc
+            slot_pairs = 0
+            for sl in lead.slots:
+                if sl.kind == "pair":
+                    slot_pairs += 1
+                elif sl.kind == "tractor":
+                    slot_pairs += sl.length
+            np_ = min(slot_pairs, _pc(list(hand_cat), cat)) - _pc(list(filled), cat)
+            if np_ > 0:
+                cands.append(list(filled) + _low_fill(left, need, np_, cat,
+                                                      level, trump))
             for extra in _combinations_capped(left, need, max_moves):
                 cands.append(list(filled) + list(extra))
 
@@ -284,6 +298,69 @@ def _fast_leads(state, seat: int, limit: int) -> List[List[Card]]:
     return _dedupe(out)[:limit]
 
 
+def discard_key(c: Card, level: int, trump, hand: Sequence[Card]) -> float:
+    """垫牌时"先垫哪张"的排序键（越小越先垫）。
+
+    不能只用点数（早先就是 `c.rank`）：那样会**先垫主 2、主 3 这种低点主牌**，
+    也会把分牌当成"小牌"垫掉。用户 2026-11-23 人工对局里看到的
+    「垫了两张主牌」「垫了一对 10」都是这么来的。
+
+    优先级：非主牌 > 非分牌 > 不拆对子 > 点数小。
+    """
+    v = float(c.rank)
+    if is_trump(c, level, trump):
+        v += 1000.0                      # 主牌尽量别垫
+    if card_points(c) > 0:
+        v += 200.0                       # 分牌尽量别垫
+    if sum(1 for x in hand if x.suit == c.suit and x.rank == c.rank) >= 2:
+        v += 500.0                       # 别拆对子
+    return v
+
+
+def _low_fill(pool: List[Card], need: int, need_pairs: int, cat,
+              level=None, trump=None) -> List[Card]:
+    """从 `pool` 里取 `need` 张，**先尽量凑出 `need_pairs` 个对子**，剩下用最低的单张。
+
+    为什么必须这样：拖拉机/对子领出时，即使凑不出同款，规则也要求**优先跟对子**。
+    早先这里直接 `pool[:need]`（纯按点数从低拿），于是手里有对子也会全出单张 ——
+    用户 2026-11-23 人工对局第 7 局第 4 墩抓到的就是这个。
+    """
+    from .rules import pair_count
+
+    pool = list(pool)
+    out: List[Card] = []
+    if need_pairs > 0:
+        # **按 (花色,点数) 分组**，不能用槽位：主牌里副 2 / 副级牌一个槽位横跨多花色，
+        # 用槽位会把 D3+S3 当成一对。
+        by_slot: Dict[Tuple[str, int], List[Card]] = {}
+        for c in pool:
+            if cat.slot_of(c) is None:
+                continue
+            by_slot.setdefault((c.suit, c.rank), []).append(c)
+        # 先用**点数最低**的对子（和"垫小牌"的取向一致）
+        order = sorted(by_slot.values(),
+                       key=lambda cs: min(discard_key(y, level, trump, pool)
+                                          for y in cs)
+                       if level is not None
+                       else min(card_rank_key(y) for y in cs))
+        for cs in order:
+            if len(out) + 2 > need:
+                break
+            if len(cs) >= 2:
+                pair = sorted(cs, key=lambda x: discard_key(x, level, trump, pool))[:2]
+                out.extend(pair)
+                for c in pair:
+                    pool.remove(c)
+                if pair_count(out, cat) >= need_pairs:
+                    break
+    if level is None:
+        rest = sorted(pool, key=card_rank_key)
+    else:
+        rest = sorted(pool, key=lambda c: discard_key(c, level, trump, pool))
+    out.extend(rest[:need - len(out)])
+    return out
+
+
 def _fast_follows(state, seat: int, limit: int,
                   variants: int = 2) -> List[List[Card]]:
     """跟牌候选。variants=2 是原来的"全低/全高"，4 会再加两个混合方案。"""
@@ -297,14 +374,17 @@ def _fast_follows(state, seat: int, limit: int,
     out: List[List[Card]] = []
 
     if not hand_cat:
-        pool = sorted(hand, key=lambda c: card_rank_key(c))
+        pool = sorted(hand, key=lambda c: discard_key(c, state.level,
+                                                      state.trump_suit, hand))
         if len(pool) >= n:
-            out.append(pool[:n])
-            out.append(pool[-n:])
+            out.append(pool[:n])                 # 最该垫的 n 张
+            out.append(sorted(hand, key=card_rank_key)[:n])   # 纯低点（对照）
         return _dedupe(out)[:limit]
 
     if len(hand_cat) < n:
-        rest = sorted([c for c in hand if not cat.contains(c)], key=lambda c: card_rank_key(c))
+        rest = sorted([c for c in hand if not cat.contains(c)],
+                      key=lambda c: discard_key(c, state.level,
+                                                state.trump_suit, hand))
         fill = n - len(hand_cat)
         if fill <= len(rest):
             out.append(list(hand_cat) + rest[:fill])
@@ -337,8 +417,19 @@ def _fast_follows(state, seat: int, limit: int,
         need = n - len(chosen)
         if need < 0:
             continue
-        pool.sort(key=lambda c: card_rank_key(c))
-        out.append(chosen + pool[:need])
+        # 还缺几个对子：领出要求的对子数（对子槽 1 个、拖拉机槽 k 个）
+        # vs 手里能组成的对子数，再减去已经出掉的对子。
+        from .rules import pair_count
+        slot_pairs = 0
+        for sl in lead.slots:
+            if sl.kind == "pair":
+                slot_pairs += 1
+            elif sl.kind == "tractor":
+                slot_pairs += sl.length
+        need_pairs = min(slot_pairs, pair_count(hand_cat + chosen, cat))
+        need_pairs -= pair_count(chosen, cat)
+        out.append(chosen + _low_fill(pool, need, max(0, need_pairs), cat,
+                                      state.level, state.trump_suit))
     return _dedupe(out)[:limit]
 
 
