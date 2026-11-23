@@ -589,8 +589,10 @@ class TractorGame:
             "zhuang": self.zhuang,
             "level": self.level,
             "trump": "NT" if self.trump_suit is None else self.trump_suit,
-            "hands_start": {i: [c.short for c in self.hands_start[i]] for i in range(4)},
-            "bottom": [c.short for c in self.bottom],
+            # **用 label 不用 short**：short 里小王和 ♠J 都叫 "SJ"，存档会有歧义
+            # （2026-11-23 复盘人工对局时踩到）。
+            "hands_start": {i: [c.label for c in self.hands_start[i]] for i in range(4)},
+            "bottom": [c.label for c in self.bottom],
             "bids": [
                 {"seat": b.seat, "label": b.label(), "strengthen": b.strengthen}
                 for b in self.bids
@@ -598,11 +600,11 @@ class TractorGame:
             "tricks": self.trick_history,
             "result": self.deal_result,
             "seen_bottoms": {
-                i: [[c.short for c in s] for s in self.seen_bottoms[i]]
+                i: [[c.label for c in s] for s in self.seen_bottoms[i]]
                 for i in range(4)
             },
             "bottom_history": [
-                {"burier": h["burier"], "cards": [c.short for c in h["cards"]]}
+                {"burier": h["burier"], "cards": [c.label for c in h["cards"]]}
                 for h in self.bottom_history
             ],
             "throw_blockers": list(self.throw_blockers),
