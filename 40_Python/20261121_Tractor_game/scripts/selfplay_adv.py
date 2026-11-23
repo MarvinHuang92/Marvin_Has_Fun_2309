@@ -22,7 +22,7 @@ from tractor.engine import TractorGame  # noqa: E402
 from tractor.fast_state import FastState  # noqa: E402
 
 
-def play_one(seed, ai, net):
+def play_one(seed, ai, net, use_bottom=False):
     game = TractorGame(seed)
     game.start_match()
     ai.begin_deal(game)
@@ -56,8 +56,20 @@ def play_one(seed, ai, net):
         cards = ai.play(game, seat)
         # 先记下"这个局面 + 这一手"，再出牌
         sf = value_net._features_team(state, team)
-        af = value_net.action_features(state, seat, cards)
-        rows.append((sf, af, team, state.points[zt], state.points[1 - zt]))
+        # 显式用 v1（15 维）动作特征 —— 和 adv_mix3 的训练数据一致，
+        # 这样新老模型只差"底牌那 9 维"这一个变量
+        af = value_net.action_features(state, seat, cards, 1)
+        # **门控底牌**：只有"我是最后埋底的人"时我合法知道这 8 张，否则全 0。
+        # 顺序必须和 ai_advantage._features 一致：team特征 -> 底牌9维 -> 动作特征
+        bf = None
+        if use_bottom:
+            helper = getattr(ai, "_brain", None) or getattr(ai, "helper", None)
+            mine = getattr(helper, "_my_buried", {}).get(seat) if helper else None
+            if mine and state.last_burier == seat:
+                bf = value_net.bottom_features(mine, state.level, state.trump_suit)
+            else:
+                bf = value_net.bottom_features(None, state.level, state.trump_suit)
+        rows.append((sf, bf, af, team, state.points[zt], state.points[1 - zt]))
 
         lead = game.trick.lead if (game.trick and game.trick.lead) else None
         if lead is not None:
@@ -74,10 +86,10 @@ def play_one(seed, ai, net):
 
     final = {zt: game.declarer_points, 1 - zt: game.defender_points}
     out = []
-    for sf, af, team, p_me, p_them in rows:
+    for sf, bf, af, team, p_me, p_them in rows:
         r = (final[team] - p_me) - (final[1 - team] - p_them)
-        v = net.predict_features(sf)
-        out.append((sf, af, r - v, r))
+        v = net.predict_features(sf)     # 基线仍用旧 V（60 维），保证和之前可比
+        out.append((sf, bf, af, r - v, r))
     return out
 
 
@@ -90,6 +102,8 @@ def main():
     net = value_net.ValueNet.load(model)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     policy = sys.argv[5] if len(sys.argv) > 5 else "heuristic"
+    # 第 6 个参数传 bottom 时，样本里加 9 维门控底牌（60 + 9 + 动作 + A + R）
+    use_bottom = len(sys.argv) > 6 and sys.argv[6] == "bottom"
     if policy.startswith("adv:"):
         from tractor.ai_advantage import AdvantageAI
 
@@ -106,9 +120,10 @@ def main():
     written = 0
     with open(out_path, "w", encoding="utf-8") as f:
         for i in range(n):
-            rows = play_one(seed0 + i, ai, net)
-            for sf, af, a, r in rows:
-                f.write(",".join("%.3f" % v for v in list(sf) + list(af)))
+            rows = play_one(seed0 + i, ai, net, use_bottom)
+            for sf, bf, af, a, r in rows:
+                feats = list(sf) + (list(bf) if bf is not None else []) + list(af)
+                f.write(",".join("%.3f" % v for v in feats))
                 f.write(",%.3f,%.3f\n" % (a, r))
                 written += 1
             if (i + 1) % 500 == 0:

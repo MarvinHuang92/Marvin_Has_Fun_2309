@@ -33,8 +33,20 @@ class AdvantageAI:
         self.net = value_net.ValueNet.load(model_path)
         self.rng = random.Random(seed)
         self.samples = max(1, samples)
-        # 动作特征版本由权重维度推断：75 = 60+15(v1)，80 = 60+20(v2)
-        self.action_version = 2 if (len(self.net.w1[0]) - 60) == 20 else 1
+        # 输入布局由权重维度**显式**推断（别再用减法猜，加底牌之后会猜错）：
+        #   75 = 60 团特征 + 15 动作(v1)
+        #   80 = 60 + 20 动作(v2)
+        #   84 = 60 + **9 门控底牌** + 15 动作(v1)   ← 2026-11-23 新增
+        #   89 = 60 + 9 + 20 动作(v2)
+        dim = len(self.net.w1[0])
+        layout = {75: (1, False), 80: (2, False),
+                  84: (1, True), 89: (2, True)}
+        if dim in layout:
+            self.action_version, self.use_bottom = layout[dim]
+        else:
+            # 老逻辑兜底
+            self.action_version = 2 if (dim - 60) == 20 else 1
+            self.use_bottom = False
         self.helper = None
         self._build_helper()
 
@@ -252,9 +264,19 @@ class AdvantageAI:
         for world in worlds:
             team = world.team(seat)
             sf = value_net._features_team(world, team)
+            # **门控底牌**：只有"我是最后埋底的人"时才把我的底牌喂进去。
+            # 不是最后埋底者 -> 传 None -> 这 9 维全 0（作弊审计会盯这一条）。
+            bf = []
+            if self.use_bottom:
+                known = None
+                if (world.last_burier == seat and self.helper is not None
+                        and getattr(self.helper, "_my_buried", None)):
+                    known = self.helper._my_buried.get(seat)
+                bf = value_net.bottom_features(known, world.level,
+                                               world.trump_suit)
             for i, cards in enumerate(cands):
-                x = sf + value_net.action_features(world, seat, cards,
-                                                   self.action_version)
+                x = sf + bf + value_net.action_features(world, seat, cards,
+                                                        self.action_version)
                 scores[i] += self.net.predict_features(x) + lead_bonus[i] - risk_pen[i]
 
         best_i = max(range(len(cands)), key=lambda i: scores[i])

@@ -22,8 +22,16 @@ def main():
     # AWR：按 exp(A/tau) 加权。tau<=0 就是普通的等权回归。
     awr_tau = float(sys.argv[5]) if len(sys.argv) > 5 else 0.0
 
+    # 数据最后一列有可能是 **两列标签**（A 优势、R 实际结果）。
+    # 老数据只有一列（A），新数据（selfplay_adv 加底牌之后）是两列。
+    # 传第 6 个参数 two 显式声明，避免把 A 当成特征 → 标签泄漏（这会训出
+    # 一个 0.99 相关但完全没用的模型）。
+    two_labels = len(sys.argv) > 6 and sys.argv[6] == "two"
     data = np.loadtxt(src, delimiter=",", dtype=np.float64)
-    x, y = data[:, :-1], data[:, -1]
+    if two_labels:
+        x, y = data[:, :-2], data[:, -2]     # 特征 / 优势A（R 不参与训练）
+    else:
+        x, y = data[:, :-1], data[:, -1]
     n, dim = x.shape
     print("样本 %d 条，特征 %d 维" % (n, dim))
     print("  优势标签：均值 %+.2f  标准差 %.2f  p5 %+.0f  p95 %+.0f"
