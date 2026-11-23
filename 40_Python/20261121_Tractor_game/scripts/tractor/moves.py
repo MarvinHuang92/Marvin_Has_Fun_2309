@@ -131,7 +131,7 @@ def legal_leads(
         good.append(mv)
         if len(good) >= max_moves:
             break
-    good.sort(key=lambda mv: sum((c.rank for c in mv), 0))
+    good.sort(key=lambda mv: sum(cat.power_of(c) for c in mv))
     return good
 
 
@@ -236,7 +236,7 @@ def legal_follows(state, seat: int, *, max_moves: int = 256) -> List[List[Card]]
         good.append(mv)
         if len(good) >= max_moves:
             break
-    good.sort(key=lambda mv: sum((c.rank for c in mv), 0))
+    good.sort(key=lambda mv: sum(cat.power_of(c) for c in mv))
     return good
 
 
@@ -378,7 +378,9 @@ def _fast_follows(state, seat: int, limit: int,
                                                       state.trump_suit, hand))
         if len(pool) >= n:
             out.append(pool[:n])                 # 最该垫的 n 张
-            out.append(sorted(hand, key=card_rank_key)[:n])   # 纯低点（对照）
+            # 对照变体：不拆对子、但同样避开主牌/分牌（早先用 card_rank_key
+            # 会把 常主 2 当最小牌垫掉）
+            out.append(pool[-n:])                # 最不该垫的 n 张（多样性）
         return _dedupe(out)[:limit]
 
     if len(hand_cat) < n:
@@ -434,6 +436,16 @@ def _fast_follows(state, seat: int, limit: int,
 
 
 def card_rank_key(c: Card) -> float:
+    """“小牌优先”的排序键（越小 = 越先打出/垫掉）。
+
+    **2 是常主，不能按点数当小牌**（用户 2026-11-23 指出）：它的实际牌力比 A 还大。
+    所以这里把 2 抬到 A(14) 之上；有 level/trump 的地方会直接用 `cat.power_of`
+    （真实牌力），那个更准。
+    """
+    if c.is_joker:
+        return 100.0 + float(c.rank)
+    if c.rank == 2:
+        return 15.0                      # 常主 2：比 A(14) 大
     return float(c.rank)
 
 
