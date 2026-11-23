@@ -83,12 +83,15 @@ def sort_ok(g, seat, cards):
 
 
 def main():
+    model_name = sys.argv[2] if len(sys.argv) > 2 else "value_v4.json"
     value_net.load_active(str(os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "models", "value_v4.json")))
+        "models", model_name)))
+    print("模型：%s" % model_name)
     deals = int(sys.argv[1]) if len(sys.argv) > 1 else 40
     rng = random.Random(20261123)
 
+    spreads = []
     hit_best = 0
     hit_worst = 0
     total = 0
@@ -147,7 +150,8 @@ def main():
             rest = [x for x in pool if x not in c]
             st.hands[seat] = rest
             st.bottom = list(c)
-            v_scores.append(sum(value_net.active().predict(st, team) for _ in range(3)) / 3.0)
+            v_scores.append(sum(value_net.active().predict(
+                st, team, bottom_cards=list(c)) for _ in range(3)) / 3.0)
 
         # 真实结果
         true_pts = []
@@ -161,6 +165,7 @@ def main():
             continue
 
         total += 1
+        spreads.append(max(true_pts) - min(true_pts))
         v_best = v_scores.index(max(v_scores))
         t_best = true_pts.index(max(true_pts))
         t_worst = true_pts.index(min(true_pts))
@@ -197,6 +202,12 @@ def main():
           % (100.0 / len(cands), 100.0 / len(cands)))
     print("  两两比较的相关系数（V 差 vs 真实分差）：%+.3f（%d 对）"
           % (corr, n))
+    if spreads:
+        spreads.sort()
+        k = len(spreads)
+        print("  **同一局不同埋法的真实分差**：中位数 %.1f 分，平均 %.1f 分，"
+              "最大 %.0f 分" % (spreads[k // 2], sum(spreads) / k, spreads[-1]))
+        print("  （这就是埋底这个决策最多能值多少 —— 对照：一局约 200 分）")
     return 0
 
 

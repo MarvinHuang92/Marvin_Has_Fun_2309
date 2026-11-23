@@ -55,6 +55,9 @@ class HeuristicAI:
             "bury_smart": True,
             # 埋底搜索：在前 K 张里枚举 C(K,8)，用价值网络挑（0 = 关闭，用纯启发式）
             "bury_search_k": 0,
+            # 埋底搜索方式："perturb" = 在启发式选择附近做邻域搜索（推荐）；
+            # 空 = 老方式（top-K 里枚举 C(K,8)，实测不如邻域搜索）
+            "bury_search_mode": "",
             "bury_search_samples": 2,   # 定约采样的世界数
             # 最后一墩按倍数兑现抠底（闲家用对子/拖拉机领最后一墩，底牌分翻倍）
             "last_trick_mult": False,
@@ -205,6 +208,8 @@ class HeuristicAI:
 
     # ------------------------------------------------------------------ 埋底
     def bury(self, game: TractorGame, seat: int) -> List[Card]:
+        if self.opts.get("bury_search_mode", "") == "perturb":
+            return self._bury_search_perturb(game, seat)
         if self.opts.get("bury_search_k", 0):
             return self._bury_search(game, seat)
         if self.opts.get("bury_smart", False):
@@ -383,6 +388,66 @@ class HeuristicAI:
         return self._bury_scores(game, seat)[:8]
 
     # ------------------------------------------------- 埋底搜索（top-K + 枚举）
+    def _bury_search_perturb(self, game: TractorGame, seat: int) -> List[Card]:
+        """**在启发式的选择附近做邻域搜索**，用价值网络挑。
+
+        为什么不直接枚举 C(K,8)：启发式的 top-8 是它精心挑的，排名 9~12 的牌
+        是它**故意避开**的。C(12,8) 会把那些牌大量塞进组合里，等于把搜索
+        花在"明显更差的选项"上。神谕测试显示 V 在"启发式附近做扰动"这个邻域
+        里才有排序能力（相关 +0.334），所以候选集应该就是这个邻域。
+
+        候选 = 启发式的 8 张 + 所有"换掉其中 1 张"（替补取排名 9~16 的 8 张）
+        → 65 个候选，约 17ms。
+        """
+        from . import value_net
+
+        net = value_net.active()
+        ranked = self._bury_scores(game, seat)
+        if net is None or len(ranked) < 17:
+            return ranked[:8]
+        base = ranked[:8]
+        subs = ranked[8:16]          # 替补：排名 9~16（最接近的"次优"）
+        team = game.team(seat)
+        samples = max(1, int(self.opts.get("bury_search_samples", 2)))
+
+        cands = [tuple(base)]
+        for i in range(8):
+            for repl in subs:
+                c = list(base)
+                c[i] = repl
+                cands.append(tuple(c))
+
+        worlds = []
+        try:
+            from .search import determinize
+            st0 = FastState.from_game(game)
+            for _ in range(samples):
+                worlds.append(determinize(st0, seat, self.rng, self.tracker))
+        except Exception:
+            return base
+        if not worlds:
+            return base
+
+        pool = ranked
+        best = base
+        best_val = None
+        for c in cands:
+            picked = list(c)
+            rest = [x for x in pool if all(x is not y for y in picked)]
+            if len(rest) != 25:
+                continue
+            total = 0.0
+            for w in worlds:
+                w.hands[seat] = rest
+                w.bottom = picked
+                w.last_burier = seat
+                total += net.predict(w, team, bottom_cards=picked)
+            val = total / len(worlds)
+            if best_val is None or val > best_val:
+                best_val = val
+                best = picked
+        return best
+
     def _bury_search(self, game: TractorGame, seat: int) -> List[Card]:
         """在启发式打分的前 K 张里**枚举所有 C(K,8) 种埋法**，用价值网络挑最好的。
 
@@ -426,7 +491,9 @@ class HeuristicAI:
             for w in worlds:
                 w.hands[seat] = rest
                 w.bottom = picked
-                total += net.predict(w, team)
+                w.last_burier = seat
+                # 埋底的是我 -> 这 8 张是我的合法信息，传给 V（门控特征）
+                total += net.predict(w, team, bottom_cards=picked)
             val = total / len(worlds)
             if best_val is None or val > best_val:
                 best_val = val

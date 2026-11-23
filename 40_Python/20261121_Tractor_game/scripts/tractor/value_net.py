@@ -257,6 +257,48 @@ FEATURE_DIM_V2 = 133
 FEATURE_DIM = FEATURE_DIM_V2
 
 
+BOTTOM_DIM = 9
+
+
+def bottom_features(cards, level: int, trump) -> List[float]:
+    """底牌（8 张）的特征。`cards` 为 None 表示**这个视角不该知道底牌** → 全 0。
+
+    9 维：
+      0 是否知道（0/1）
+      1 底牌总分 / 40
+      2 底牌里的主牌张数 / 8
+      3~6 副牌四门（S/H/C/D）各几张 / 8
+      7 有没有王
+      8 有没有级牌
+    """
+    if not cards:
+        return [0.0] * BOTTOM_DIM
+    pts = sum(10 if c.rank in (5, 10, 13) else 0 for c in cards)
+    n_tr = 0
+    counts = {"S": 0, "H": 0, "C": 0, "D": 0}
+    has_joker = 0.0
+    has_level = 0.0
+    for c in cards:
+        if c.is_joker:
+            has_joker = 1.0
+        if c.rank == level:
+            has_level = 1.0
+        if is_trump(c, level, trump):
+            n_tr += 1
+        else:
+            counts[c.suit] = counts.get(c.suit, 0) + 1
+    return ([1.0, pts / 40.0, n_tr / 8.0]
+            + [counts[k] / 8.0 for k in ("S", "H", "C", "D")]
+            + [has_joker, has_level])
+
+
+def state_features_with_bottom(state: FastState, team: int,
+                               bottom_cards=None) -> List[float]:
+    """v3 布局：133 维（按座位）+ 9 维门控底牌 = 142 维。"""
+    return _features_seat(state, team) + bottom_features(
+        bottom_cards, state.level, state.trump_suit)
+
+
 def state_features(state: FastState, team: int) -> List[float]:
     """默认布局（v2，133 维）。老的 v1 模型请用 ValueNet.predict。"""
     return _features_seat(state, team)
@@ -444,12 +486,20 @@ class ValueNet:
             out += self.w2[0][j] * v
         return out
 
-    def predict(self, state: FastState, team: int) -> float:
-        # 特征布局由权重维度推断：60 -> v1（按队），133 -> v2（按座位）
+    def predict(self, state: FastState, team: int, bottom_cards=None) -> float:
+        """`bottom_cards`：**只有在你合法知道底牌时才传**（否则 None = 全 0）。
+
+        特征布局由权重维度推断：60 -> v1（按队）、133 -> v2（按座位）、
+        142 -> v3（按座位 + 9 维门控底牌）。
+        """
         dim = len(self.w1[0])
         if dim == FEATURE_DIM_V1:
             return self.predict_features(_features_team(state, team))
-        return self.predict_features(_features_seat(state, team))
+        if dim == FEATURE_DIM:
+            return self.predict_features(_features_seat(state, team))
+        return self.predict_features(
+            _features_seat(state, team) + bottom_features(
+                bottom_cards, state.level, state.trump_suit))
 
 
 # ---------------------------------------------------------------------------
