@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+
+# 程序运行产物（不进库）
+logs/
+data/*
+!data/.gitkeep
+
+# 本地音频素材：来源/许可因人而异，默认不提交、不随代码分发
+sounds/
