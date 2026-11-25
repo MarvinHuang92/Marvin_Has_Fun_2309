@@ -28,6 +28,7 @@ from minirace.config import load_config  # noqa: E402
 from minirace.controls import Command  # noqa: E402
 from minirace.laptiming import LapTimer, format_time  # noqa: E402
 from minirace.sim import Simulation  # noqa: E402
+from minirace.warnings import WrongWayMonitor  # noqa: E402
 from minirace3d.minimap import MiniMap  # noqa: E402
 from minirace3d.scene import SceneBuilder  # noqa: E402
 
@@ -67,6 +68,7 @@ class App3D(ShowBase):
         self.track_scene = None
         self.car = None
         self.minimap = None
+        self.wrong_way = WrongWayMonitor()
         self._notice_until = 0.0
         self._build_lights()
         self._build_hud()
@@ -161,6 +163,9 @@ class App3D(ShowBase):
             self.corner_texts.append(item)
         self.corner_triangle = self._build_corner_triangle(
             self.corner_start_x + self.corner_step * 2, self.corner_y - 0.036)
+        self.hud_wrong = self._text("[WRONG WAY]", (0.0, 0.34), 0.075,
+                                    (1.0, 0.58, 0.12, 1), align="center")
+        self.hud_wrong.hide()
         self.hud_notice = self._text("", (0.0, 0.26), 0.055,
                                      (1.0, 0.72, 0.25, 1), align="center")
         self.hud_help = self._text(
@@ -231,6 +236,7 @@ class App3D(ShowBase):
         config = self._map_config(self.current_map)
         self.sim = Simulation(config, project_dir=PROJECT_DIR)
         self.sim.step(Command(), 0.0)
+        self.wrong_way.reset()
         self.lap_timer = LapTimer(self.sim.track)
         self.best_laps = getattr(self, "best_laps", {})
         if self.current_map.get("id") in self.best_laps:
@@ -291,12 +297,14 @@ class App3D(ShowBase):
             self.sim.telemetry = None
         else:
             self.sim.reset()
+        self.wrong_way.reset()
         self._place_car()
         self._update_camera(0.0, snap=True)
 
     def _home_reset(self):
         self.sim.reset()
         self.lap_timer.home_reset(self.sim.time)
+        self.wrong_way.reset()
         self._place_car()
         self._update_camera(0.0, snap=True)
 
@@ -348,6 +356,18 @@ class App3D(ShowBase):
         self.camera.setPos(self.cam_current)
         self.camera.lookAt(Point3(look.x, look.y, look.z), Vec3(0, 0, 1))
 
+    def _update_wrong_way(self):
+        """每个物理步更新 3D 的逆行判定，并在闪烁显示相位响提示音。"""
+        track = self.sim.track
+        if track is None or track.kind != "circuit":
+            self.wrong_way.reset()
+            return
+        error = track.direction_error(self.sim.vehicle.x, self.sim.vehicle.y,
+                                      self.sim.vehicle.heading)
+        _active, _visible, beep = self.wrong_way.update(error, self.sim.step_dt)
+        if beep:
+            self.audio.warning_beep()
+
     # ------------------------------------------------------------------ 主循环
     def _update_task(self, task):
         now = time.time()
@@ -361,6 +381,7 @@ class App3D(ShowBase):
             while (self._accumulator >= self.sim.step_dt
                    and steps < self.sim.max_substeps):
                 self.sim.step(command)
+                self._update_wrong_way()
                 if self.lap_timer.enabled:
                     self.lap_timer.update(self.sim.time, self.sim.vehicle.x,
                                           self.sim.vehicle.y)
@@ -391,6 +412,11 @@ class App3D(ShowBase):
             self.hud_lap.setText("")
             self.hud_time.setText(format_time(self.sim.time))
             self.hud_best.setText("")
+        if (self.wrong_way.active and self.wrong_way.visible
+                and not self.paused):
+            self.hud_wrong.show()
+        else:
+            self.hud_wrong.hide()
         window = None
         if self.sim.track is not None:
             window = self.sim.track.element_window_at(

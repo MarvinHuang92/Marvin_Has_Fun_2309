@@ -300,3 +300,16 @@ tests_audio 增启动延迟用例，共16项；配置/文档更新。
 实现：pitch_steps 128->64；双通道更新改为 voice 分配器：只替换不在目标集合里的
 voice，另一个继续播放，避免每次换档两路同时重启；保留启动淡入/换挡/撞墙。
 文档/版本 V3.17.2；tests_audio 16项。
+2026.11.25 第三十四轮（V3.18.0）3D WRONG WAY
+
+38.
+需求：3D版也加 Wrong Way 提示。
+实现：App3D 复用 WrongWayMonitor；每个物理步 direction_error 更新并 warning_beep；
+HUD 中上部 [WRONG WAY] 1s显示/1s隐藏；F2/F5/HOME 重置；圆形地图无判定。
+文档/版本 V3.18.0。
+2026.11.25 第三十五轮（V3.18.0）性能车惯量
+
+39.
+需求：性能车转动惯量 2000 -> 2400（更符合物理），并提交保存的转动惯量计算图。
+实现：preset_2_sport.json inertia=2400；新增 docs/转动惯量计算.png 并在
+README/车辆动力学模型引用；说明该惯量为绕质心垂直轴（z）的 Izz。
