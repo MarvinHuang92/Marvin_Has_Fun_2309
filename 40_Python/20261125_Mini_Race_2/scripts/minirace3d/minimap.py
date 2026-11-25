@@ -8,6 +8,8 @@ from panda3d.core import (Geom, GeomNode, GeomTriangles, GeomVertexData,
                           GeomVertexFormat, GeomVertexWriter, LineSegs,
                           NodePath, TextNode, Vec3, Vec4)
 
+from minirace.ai_colors import ai_rgb
+
 GREEN = (0.18, 0.95, 0.42, 1.0)
 WHITE = (0.92, 0.94, 0.98, 1.0)
 GREY = (0.70, 0.73, 0.80, 1.0)
@@ -31,6 +33,7 @@ class MiniMap(object):
         self.aspect_width = 2.0 * (self.screen_width / float(self.screen_height))
         self.root = base.a2dBottomRight
         self._nodes = []
+        self._ai_markers = []
         self._build_panel()
         self._build_track()
         self._build_start()
@@ -253,11 +256,49 @@ class MiniMap(object):
         self._car.setLightOff()
         self._nodes.append(self._car)
 
-    def update(self, vehicle):
+    def _add_ai_marker(self, index):
+        unit_x = self.aspect_width / float(self.screen_width)
+        unit_y = 2.0 / float(self.screen_height)
+        vdata = GeomVertexData("minimap_ai", GeomVertexFormat.getV3(),
+                               Geom.UHStatic)
+        vdata.setNumRows(3)
+        writer = GeomVertexWriter(vdata, "vertex")
+        writer.addData3f(0.0, 0.0, 7.0 * unit_y)
+        writer.addData3f(-3.0 * unit_x, 0.0, -2.5 * unit_y)
+        writer.addData3f(3.0 * unit_x, 0.0, -2.5 * unit_y)
+        prim = GeomTriangles(Geom.UHStatic)
+        prim.addVertices(0, 1, 2)
+        prim.closePrimitive()
+        geom = Geom(vdata)
+        geom.addPrimitive(prim)
+        node = GeomNode("minimap_ai")
+        node.addGeom(geom)
+        marker = self.root.attachNewNode(node)
+        rgb = ai_rgb(index)
+        marker.setColor(Vec4(rgb[0] / 255.0, rgb[1] / 255.0,
+                             rgb[2] / 255.0, 1.0))
+        marker.setLightOff()
+        self._nodes.append(marker)
+        self._ai_markers.append(marker)
+
+    def update(self, vehicle, ai_telemetries=None):
         px, py = self._to_px(vehicle.x, vehicle.y)
         x, y = self._pixel_to_ndc(px, py)
         self._car.setPos(x, 0.0, y)
         self._car.setR(90.0 - math.degrees(vehicle.heading))
+
+        telemetries = list(ai_telemetries or [])
+        while len(self._ai_markers) < len(telemetries):
+            self._add_ai_marker(len(self._ai_markers))
+        for index, marker in enumerate(self._ai_markers):
+            if index >= len(telemetries) or telemetries[index] is None:
+                marker.hide()
+                continue
+            telem = telemetries[index]
+            ax, ay = self._pixel_to_ndc(*self._to_px(telem.x, telem.y))
+            marker.setPos(ax, 0.0, ay)
+            marker.setR(90.0 - math.degrees(telem.heading))
+            marker.show()
 
     def destroy(self):
         for node in self._nodes:

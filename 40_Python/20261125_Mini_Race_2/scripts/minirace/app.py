@@ -23,10 +23,12 @@ from pygame.locals import (
     K_w, QUIT,
 )
 
+from minirace.ai import AIManager, load_ai_config
 from minirace.audio import Audio
 from minirace.controls import Command
 from minirace.diagnostics import Diagnostics
 from minirace.laptiming import LapTimer
+from minirace.ranking import build_standings
 from minirace.render import Renderer
 from minirace.sim import Simulation
 from minirace.storage import TelemetryRecorder
@@ -70,6 +72,8 @@ class App(object):
         self.sim = Simulation(self.config, project_dir=project_dir)
         # 先算一步 dt=0 的物理，保证第一帧就有观测量可画
         self.sim.step(Command(), 0.0)
+        self.ai_config = load_ai_config(project_dir)
+        self.ai_manager = AIManager(self.config, self.ai_config, project_dir)
         self.renderer = Renderer(self.screen, self.config, project_dir)
         self.audio = Audio(config.get("audio", {}), project_dir=self.project_dir)
         self.diagnostics = Diagnostics(project_dir, self.config)
@@ -228,6 +232,7 @@ class App(object):
         self.config = self._config_for_map(self.map_index)
         self.sim = Simulation(self.config, project_dir=self.project_dir)
         self.sim.step(Command(), 0.0)
+        self.ai_manager = AIManager(self.config, self.ai_config, self.project_dir)
         zoom_level = getattr(self.renderer, "zoom_level", 0)
         self.renderer = Renderer(self.screen, self.config, self.project_dir)
         # F2 切图只重建 Renderer：保留本次窗口内的显示倍率，关窗后自然回到默认
@@ -259,6 +264,7 @@ class App(object):
         track = sim.track
         if track is None:
             sim.reset()
+            self.ai_manager.reset()
             self.renderer.reset_camera()
             self.wrong_way.reset()
             LOG.info("F5 复位：旧版矩形场地 -> 场地中心")
@@ -267,6 +273,7 @@ class App(object):
             sim.vehicle.reset(sim.spawn[0], sim.spawn[1], sim.spawn[2])
             sim.trail.clear()
             sim.telemetry = None
+            self.ai_manager.reset()
             self.renderer.reset_camera()
             self.wrong_way.reset()
             self.accumulator = 0.0
@@ -297,6 +304,7 @@ class App(object):
             command = self._read_command()
             if not self.paused:
                 self._advance(command, frame_seconds)
+            self.ai_manager.update(frame_seconds, paused=self.paused)
 
             stats = {
                 "fps": self.clock.get_fps(),
@@ -319,7 +327,16 @@ class App(object):
                 "best_lap": self.lap_timer.best,
                 "wrong_way_active": self.wrong_way.active,
                 "wrong_way_visible": self.wrong_way.visible,
+                "ai_count": len(self.ai_manager.cars),
+                "ai_cars": self.ai_manager.telemetries,
             }
+            if (self.sim.track is not None
+                    and self.sim.track.kind == "circuit"):
+                entries = [(car.label, car.race_distance, car.best_lap)
+                           for car in self.ai_manager.cars]
+                visible, _player = build_standings(
+                    self.sim.distance, self.lap_timer.best, entries)
+                stats["standings"] = visible
             if self.sim.track is not None and self.sim.track.elements:
                 window = self.sim.track.element_window_at(
                     self.sim.vehicle.x, self.sim.vehicle.y)
@@ -402,6 +419,7 @@ class App(object):
                         LOG.info("诊断模式：关，摘要：%s", path)
                 elif event.key == K_HOME:
                     self.sim.reset()
+                    self.ai_manager.reset()
                     self.accumulator = 0.0
                     self.lap_timer.home_reset(self.sim.time)
                     self.renderer.reset_camera()

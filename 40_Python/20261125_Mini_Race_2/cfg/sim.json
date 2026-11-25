@@ -59,11 +59,11 @@
   "vehicle": {
     "step_hz": 240,
     "max_substeps": 16,
-    "mass": 1350.0,
-    "inertia": 2000.0,
+    "mass": 1450.0,
+    "inertia": 2900.0,
     "wheelbase": 2.7,
     "front_weight_fraction": 0.52,
-    "cg_height": 0.35,
+    "cg_height": 0.4,
     "wheel_radius": 0.32,
     "max_steer_deg": 33.5,
     "half_width": 0.95,
@@ -72,7 +72,7 @@
     "stop_speed": 0.05
   },
   "tires": {
-    "friction": 1.2,
+    "friction": 1.1,
     "cornering_stiffness": 16.0,
     "tire_shape": 1.6,
     "front_stiffness_scale": 1.0,
@@ -90,20 +90,19 @@
     "final_drive": 5.5,
     "gear_ratios": [
       3.1,
-      2.5,
-      2.01,
-      1.62,
-      1.31,
-      1.05,
+      2.35,
+      1.85,
+      1.55,
+      1.32,
       0.85
     ],
     "reverse_ratio": 3.2,
     "efficiency": 0.9,
     "idle_rpm": 900.0,
-    "redline_rpm": 8000.0,
+    "redline_rpm": 7000.0,
     "launch_rpm": 3000.0,
-    "shift_up_rpm": 7200.0,
-    "shift_down_rpm": 3000.0,
+    "shift_up_rpm": 6700.0,
+    "shift_down_rpm": 2500.0,
     "kickdown_rpm": 3300.0,
     "shift_time": 0.18,
     "shift_interval": 0.3
@@ -112,43 +111,43 @@
     "torque_curve": [
       [
         1000.0,
-        293.25
+        234.6
       ],
       [
         2000.0,
-        382.5
+        306.0
       ],
       [
         3000.0,
-        420.75
+        336.6
       ],
       [
         4500.0,
-        446.25
-      ],
-      [
-        5500.0,
-        420.75
-      ],
-      [
-        6500.0,
         357.0
       ],
       [
+        5500.0,
+        336.6
+      ],
+      [
+        6500.0,
+        285.6
+      ],
+      [
         7200.0,
-        280.5
+        224.4
       ]
     ],
     "friction_base": 16.0,
     "friction_per_rpm": 0.005
   },
   "aero": {
-    "drag_coefficient": 0.36,
+    "drag_coefficient": 0.42,
     "rolling_resistance": 0.015
   },
   "brakes": {
-    "decel_limit": 40.0,
-    "front_bias": 0.65
+    "decel_limit": 13.5,
+    "front_bias": 0.62
   },
   "controls": {
     "sensitivity_throttle": 1.8,
@@ -164,11 +163,15 @@
     "master_volume": 0.35,
     "engine_volume": 0.9,
     "slip_volume": 0.7,
-    "startup_delay_s": 0.6,
-    "fade_in_s": 0.4,
     "sample_pack": {
       "enabled": true,
       "engine_file": "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-1.wav",
+      "loop_start_s": 0.0,
+      "loop_seconds": 4.0,
+      "base_rpm": 2400.0,
+      "min_pitch_factor": 0.45,
+      "max_pitch_factor": 2.6,
+      "target_peak": 0.55,
       "run_engine_files": [
         "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-8.wav",
         "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-9.wav",
@@ -178,18 +181,21 @@
         "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-13.wav"
       ],
       "shift_file": "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-gear-shift-1.wav",
-      "run_engine_frequencies": [73.5, 82.5, 92.5, 104.0, 116.5, 131.0],
+      "run_engine_frequencies": [
+        73.5,
+        82.5,
+        92.5,
+        104.0,
+        116.5,
+        131.0
+      ],
       "run_loop_seconds": 1.5,
       "pitch_steps": 64,
       "idle_pitch_factor": 0.95,
-      "loop_start_s": 0.0,
-      "loop_seconds": 4.0,
-      "base_rpm": 2400.0,
-      "min_pitch_factor": 0.45,
-      "max_pitch_factor": 2.6,
-      "target_peak": 0.55,
       "crash_volume": 0.85
-    }
+    },
+    "startup_delay_s": 0.6,
+    "fade_in_s": 0.4
   },
   "diagnostics": {
     "jump_accel_threshold": 50.0,
@@ -219,5 +225,5 @@
       "margin": 14
     }
   },
-  "vehicle_preset": "custom"
+  "vehicle_preset": "grocery"
 }

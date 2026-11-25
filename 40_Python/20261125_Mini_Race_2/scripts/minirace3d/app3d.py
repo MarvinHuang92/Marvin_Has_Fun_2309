@@ -23,10 +23,13 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(PROJECT_DIR, "scripts"))
 
+from minirace.ai import AIManager, load_ai_config  # noqa: E402
+from minirace.ai_colors import ai_float  # noqa: E402
 from minirace.audio import Audio  # noqa: E402
 from minirace.config import load_config  # noqa: E402
 from minirace.controls import Command  # noqa: E402
 from minirace.laptiming import LapTimer, format_time  # noqa: E402
+from minirace.ranking import build_standings, format_gap, ordinal  # noqa: E402
 from minirace.sim import Simulation  # noqa: E402
 from minirace.warnings import WrongWayMonitor  # noqa: E402
 from minirace3d.minimap import MiniMap  # noqa: E402
@@ -50,6 +53,7 @@ class App3D(ShowBase):
 
         self.project_dir = PROJECT_DIR
         self.base_config = load_config(PROJECT_DIR)
+        self.ai_config = load_ai_config(PROJECT_DIR)
         self.audio = Audio(self.base_config.get("audio", {}),
                            project_dir=self.project_dir)
         self.maps = list((self.base_config.get("maps", {}) or {}).get("list", []))
@@ -63,10 +67,14 @@ class App3D(ShowBase):
         self.last_frame_time = time.time()
         self.steer_keys = {}
         self.cam_mode = 0  # 0=车尾追车，1=车头视角
+        self.look_back = False
         self.cam_current = None
         self.scene_root = None
         self.track_scene = None
         self.car = None
+        self.ai_manager = None
+        self.ai_nodes = []
+        self.ai_labels = []
         self.minimap = None
         self.wrong_way = WrongWayMonitor()
         self._notice_until = 0.0
@@ -163,14 +171,20 @@ class App3D(ShowBase):
             self.corner_texts.append(item)
         self.corner_triangle = self._build_corner_triangle(
             self.corner_start_x + self.corner_step * 2, self.corner_y - 0.036)
+        self.hud_standings = []
+        for index in range(4):
+            item = self._text("", (0.80, 0.60 - index * 0.034), 0.023,
+                              (0.92, 0.94, 1.0, 1), align="right")
+            item.hide()
+            self.hud_standings.append(item)
         self.hud_wrong = self._text("[WRONG WAY]", (0.0, 0.34), 0.075,
                                     (1.0, 0.58, 0.12, 1), align="center")
         self.hud_wrong.hide()
         self.hud_notice = self._text("", (0.0, 0.26), 0.055,
                                      (1.0, 0.72, 0.25, 1), align="center")
         self.hud_help = self._text(
-            "W/S throttle-brake   A/D steer   R gear   M mute   F2 map   F5 reset   "
-            "HOME start   C camera   P pause   ESC quit",
+            "W/S throttle-brake   A/D steer   R gear   M mute   B look back   F2 map   "
+            "F5 reset   HOME start   C camera   P pause   ESC quit",
             (0.0, -0.94), 0.026, (0.78, 0.82, 0.90, 1), align="center")
 
     def _build_corner_triangle(self, x, y):
@@ -247,6 +261,20 @@ class App3D(ShowBase):
         self.car = self.track_scene.build_car()
         self.minimap = MiniMap(self, self.sim.track, self.current_map,
                                font=self.hud_font)
+        self.ai_manager = AIManager(config, self.ai_config, PROJECT_DIR)
+        self.ai_nodes = []
+        for ai_index, _ai_car in enumerate(self.ai_manager.cars):
+            node = self.track_scene.build_car(ai_float(ai_index))
+            self.ai_nodes.append(node)
+            label = TextNode("ai_label_%d" % (ai_index + 1))
+            label.setText("AI_%02d" % (ai_index + 1))
+            label.setTextColor(Vec4(1, 1, 1, 1))
+            label.setAlign(TextNode.ACenter)
+            label_node = node.attachNewNode(label)
+            label_node.setBillboardPointEye()
+            label_node.setPos(0, 0, 2.15)
+            label_node.setScale(0.24)
+            self.ai_labels.append(label_node)
         self.cam_current = None
         self._accumulator = 0.0
         if announce:
@@ -270,6 +298,9 @@ class App3D(ShowBase):
             kind.upper(), self.sim.track.lap_length_m
             if self.sim.track is not None else 0.0,
             self.sim.track.width_m if self.sim.track is not None else 0.0))
+        if self.ai_manager is not None:
+            self.hud_status.setText(self.hud_status.getText()
+                                    + "   AI %d" % len(self.ai_manager.cars))
 
     # ------------------------------------------------------------------ 输入/复位
     def _key(self, code):
@@ -297,12 +328,16 @@ class App3D(ShowBase):
             self.sim.telemetry = None
         else:
             self.sim.reset()
+        if self.ai_manager is not None:
+            self.ai_manager.reset()
         self.wrong_way.reset()
         self._place_car()
         self._update_camera(0.0, snap=True)
 
     def _home_reset(self):
         self.sim.reset()
+        if self.ai_manager is not None:
+            self.ai_manager.reset()
         self.lap_timer.home_reset(self.sim.time)
         self.wrong_way.reset()
         self._place_car()
@@ -338,6 +373,19 @@ class App3D(ShowBase):
         fy = math.sin(vehicle.heading)
         self.car.lookAt(Point3(vehicle.x + fx, vehicle.y + fy, 0.0), Vec3(0, 0, 1))
 
+    def _place_ai_cars(self):
+        if self.ai_manager is None:
+            return
+        for node, car in zip(self.ai_nodes, self.ai_manager.cars):
+            telem = car.telemetry
+            if telem is None:
+                continue
+            node.setPos(telem.x, telem.y, 0.0)
+            fx = math.cos(telem.heading)
+            fy = math.sin(telem.heading)
+            node.lookAt(Point3(telem.x + fx, telem.y + fy, 0.0),
+                        Vec3(0, 0, 1))
+
     def _update_camera(self, dt, snap=False):
         vehicle = self.sim.vehicle
         fx = math.cos(vehicle.heading)
@@ -348,6 +396,11 @@ class App3D(ShowBase):
         else:
             desired = Vec3(vehicle.x + fx * 3.6, vehicle.y + fy * 3.6, 1.85)
             look = Vec3(vehicle.x + fx * 22.0, vehicle.y + fy * 22.0, 0.15)
+        if self.look_back:
+            cx, cy = vehicle.x, vehicle.y
+            desired = Vec3(2.0 * cx - desired.x, 2.0 * cy - desired.y,
+                           desired.z)
+            look = Vec3(2.0 * cx - look.x, 2.0 * cy - look.y, look.z)
         if snap or self.cam_current is None:
             self.cam_current = desired
         else:
@@ -374,6 +427,7 @@ class App3D(ShowBase):
         dt = now - self.last_frame_time
         self.last_frame_time = now
         dt = min(max(dt, 0.0), 0.05)
+        self.look_back = self._key(KeyboardButton.ascii_key("b"))
         if not self.paused:
             command = self._read_command()
             self._accumulator += dt
@@ -389,10 +443,13 @@ class App3D(ShowBase):
                 steps += 1
             if steps >= self.sim.max_substeps:
                 self._accumulator = 0.0
+        if self.ai_manager is not None:
+            self.ai_manager.update(dt, paused=self.paused)
         self._place_car()
+        self._place_ai_cars()
         self._update_camera(dt)
         if self.minimap is not None:
-            self.minimap.update(self.sim.vehicle)
+            self.minimap.update(self.sim.vehicle, self.ai_manager.telemetries)
         self.audio.update(self.sim.telemetry, paused=self.paused)
         self._update_hud()
         return Task.cont
@@ -412,6 +469,27 @@ class App3D(ShowBase):
             self.hud_lap.setText("")
             self.hud_time.setText(format_time(self.sim.time))
             self.hud_best.setText("")
+        if (self.sim.track is not None
+                and self.sim.track.kind == "circuit"):
+            entries = [(car.label, car.race_distance, car.best_lap)
+                       for car in self.ai_manager.cars]
+            visible, player_row = build_standings(
+                self.sim.distance, self.lap_timer.best, entries)
+            for index, item in enumerate(self.hud_standings):
+                if index < len(visible):
+                    row = visible[index]
+                    text = "%s  %-7s  %6s  %s" % (
+                        ordinal(row.rank), row.name,
+                        format_gap(row, player_row, self.sim.track.lap_length_m), format_time(row.best_lap))
+                    item.setText(text)
+                    item.setFg(Vec4(1.0, 0.86, 0.42, 1.0) if row.is_player
+                               else Vec4(0.92, 0.94, 1.0, 1.0))
+                    item.show()
+                else:
+                    item.hide()
+        else:
+            for item in self.hud_standings:
+                item.hide()
         if (self.wrong_way.active and self.wrong_way.visible
                 and not self.paused):
             self.hud_wrong.show()

@@ -23,8 +23,10 @@ from pygame.locals import (
 )
 
 from minirace import __version__
+from minirace.ai_colors import AI_OUTLINE, ai_rgb
 from minirace.camera import Camera, ChaseCamera
 from minirace.laptiming import format_time
+from minirace.ranking import format_gap, ordinal
 from minirace.track import Track
 from minirace.zoom import adjust_level, zoom_factor, zoom_label
 
@@ -213,6 +215,7 @@ class Renderer(object):
         self._draw_background()
         if self.show_trail:
             self._draw_trail(sim)
+        self._draw_ai_cars(stats.get("ai_cars") or [])
         self._draw_car(sim)
         if self.show_hud:
             self._draw_hud(sim, stats)
@@ -220,6 +223,7 @@ class Renderer(object):
             self._draw_help()
         if self.track_mode:
             self._draw_timing(stats)
+            self._draw_standings(stats)
             self._draw_corners(stats)
             self._draw_minimap(sim, stats)
             if stats.get("map_notice"):
@@ -406,6 +410,30 @@ class Renderer(object):
             label("TIME", x + 16)
             value(format_time(lap_time), x + 16)
 
+    def _draw_standings(self, stats):
+        """右上角名次表：总是 4 行以内（第一名/玩家前后）。"""
+        rows = stats.get("standings") or []
+        if not rows or self.track is None or self.track.kind != "circuit":
+            return
+        player_row = next((row for row in rows if row.is_player), None)
+        width = 400
+        line_h = 22
+        height = 8 + line_h * len(rows)
+        x = self.width - 16 - width
+        y = 14 + 64 + 6 + 42 + 6
+        panel = pygame.Surface((width, height), pygame.SRCALPHA)
+        panel.fill(PANEL_BG)
+        pygame.draw.rect(panel, PANEL_BORDER, panel.get_rect(), 1)
+        self.screen.blit(panel, (x, y))
+        for index, row in enumerate(rows):
+            gap = format_gap(row, player_row, self.track.lap_length_m)
+            best = format_time(row.best_lap)
+            text = "%s  %-7s  %6s  %s" % (
+                ordinal(row.rank), row.name, gap, best)
+            color = YELLOW if row.is_player else WHITE
+            surface = self.font_small.render(text, True, color)
+            self.screen.blit(surface, (x + 10, y + 5 + line_h * index))
+
     # ------------------------------------------------------------------ 缩略图
     def _minimap_rect(self):
         help_h = self.help_bg.get_height() if self.show_help else 0
@@ -486,6 +514,25 @@ class Renderer(object):
                            (int(start_map[0]), int(start_map[1])), 4)
         pygame.draw.circle(self.screen, WHITE,
                            (int(start_map[0]), int(start_map[1])), 4, 1)
+
+        # AI：小彩色三角（和玩家车一样不旋转，只做缩略图标记）
+        for ai_index, ai_telem in enumerate(stats.get("ai_cars") or []):
+            if ai_telem is None:
+                continue
+            ai_map = to_map(ai_telem.x, ai_telem.y)
+            ai_forward = (math.cos(ai_telem.heading), -math.sin(ai_telem.heading))
+            ai_side = (-ai_forward[1], ai_forward[0])
+            ai_nose = (ai_map[0] + ai_forward[0] * 5.0,
+                       ai_map[1] + ai_forward[1] * 5.0)
+            ai_rear_l = (ai_map[0] - ai_forward[0] * 2.0 + ai_side[0] * 2.0,
+                         ai_map[1] - ai_forward[1] * 2.0 + ai_side[1] * 2.0)
+            ai_rear_r = (ai_map[0] - ai_forward[0] * 2.0 - ai_side[0] * 2.0,
+                         ai_map[1] - ai_forward[1] * 2.0 - ai_side[1] * 2.0)
+            ai_color = ai_rgb(ai_index)
+            pygame.draw.polygon(self.screen, ai_color,
+                                [ai_nose, ai_rear_l, ai_rear_r])
+            pygame.draw.polygon(self.screen, AI_OUTLINE,
+                                [ai_nose, ai_rear_l, ai_rear_r], 1)
 
         # 自车：红色小三角形（方向随 heading，缩略图本身不旋转）
         car_map = to_map(sim.vehicle.x, sim.vehicle.y)
@@ -591,6 +638,32 @@ class Renderer(object):
             pygame.draw.line(self.screen, color, points[index - 1], points[index],
                              line_width)
 
+    def _draw_ai_cars(self, telemetries):
+        """画 AI 车辆：独立彩色多边形，和玩家车明显区分。"""
+        car_length = 4.5
+        car_width = 1.9
+        for index, telem in enumerate(telemetries):
+            if telem is None:
+                continue
+            forward = (math.cos(telem.heading), math.sin(telem.heading))
+            side = (-forward[1], forward[0])
+            front = (telem.x + forward[0] * car_length * 0.5,
+                     telem.y + forward[1] * car_length * 0.5)
+            rear = (telem.x - forward[0] * car_length * 0.5,
+                    telem.y - forward[1] * car_length * 0.5)
+            corners = [
+                self.camera.world_to_screen(front[0], front[1]),
+                self.camera.world_to_screen(
+                    rear[0] + side[0] * car_width * 0.5,
+                    rear[1] + side[1] * car_width * 0.5),
+                self.camera.world_to_screen(
+                    rear[0] - side[0] * car_width * 0.5,
+                    rear[1] - side[1] * car_width * 0.5),
+            ]
+            color = ai_rgb(index)
+            pygame.draw.polygon(self.screen, color, corners)
+            pygame.draw.polygon(self.screen, AI_OUTLINE, corners, 1)
+
     def _draw_car(self, sim):
         vehicle = sim.vehicle
         # 车身尺寸按米 → 像素缩放，保证任何显示比例下都是真实大小
@@ -642,6 +715,8 @@ class Renderer(object):
             view = "%s %.2f px/m   WORLD %.1f×%.1f m" % (
                 view_word, self.camera.pixels_per_meter,
                 self.world_width, self.world_height)
+        if stats.get("ai_count"):
+            view += "   AI %d" % int(stats["ai_count"])
         self.screen.blit(self.font_small.render(view, True, DIM), (ox + 24, oy + 92))
 
         # 挡位 / 转速 / 转速表

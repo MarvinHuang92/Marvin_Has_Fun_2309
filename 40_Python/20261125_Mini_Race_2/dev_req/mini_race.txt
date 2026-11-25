@@ -313,3 +313,21 @@ HUD 中上部 [WRONG WAY] 1s显示/1s隐藏；F2/F5/HOME 重置；圆形地图�
 需求：性能车转动惯量 2000 -> 2400（更符合物理），并提交保存的转动惯量计算图。
 实现：preset_2_sport.json inertia=2400；新增 docs/转动惯量计算.png 并在
 README/车辆动力学模型引用；说明该惯量为绕质心垂直轴（z）的 Izz。
+2026.11.25 第三十六轮（V3.19.0）AI驾驶员
+
+40.
+需求：先定驾驶接口，再规则驾驶员闭环；04_TuneAI.bat 调 AI 参数，60Hz决策，
+调参后算力余量；参数加 AI 数量，多 AI 独立、车车无碰撞、只碰边界，默认1个。
+实现：driver.py（DriverObservation/DriveCommand/RuleDriver纯追踪+曲率限速）、
+ai.py（AICar独立Simulation/AIManager/benchmark_ai）、cfg/ai.json、
+04_TuneAI.bat + tune_ai.py tkinter控制台；2D/3D接入AI车和HUD数量；
+tests_ai.py 7项。默认 count=1，decision_hz=60。
+2026.11.26 第三十七轮（V3.19.0）AI视觉/排名
+
+41.
+需求：3D缩略图显示AI位置；3D按住B从车前向后看；3D AI车上方AI_01标签；
+2D/3D右上名次表（最多4行：第一+玩家前后；玩家最后=第一+玩家前两人；玩家前三=前四；
+圆形不显示）；差距领先为负、落后为正，超过一圈显示±nLAP。
+实现：ranking.py（build_standings/select/format_gap）；AICar lap_timer/race_distance/label；
+2D render standings + AI count；3D standings HUD、AI TextNode标签、B绕车中心旋转相机、
+MiniMap AI markers；tests_ai 9项；文档/截图更新。

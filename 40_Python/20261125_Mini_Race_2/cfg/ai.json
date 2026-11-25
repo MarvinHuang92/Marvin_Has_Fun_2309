@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "count": 1,
+  "decision_hz": 60.0,
+  "spawn_spacing_m": 12.0,
+  "lookahead_base_m": 8.0,
+  "lookahead_time_s": 0.5,
+  "steering_gain": 1.0,
+  "steer_slew_rate": 6.0,
+  "target_lat_accel": 8.0,
+  "brake_decel": 8.0,
+  "max_speed_mps": 42.0,
+  "throttle_gain": 0.35,
+  "brake_gain": 0.55
+}

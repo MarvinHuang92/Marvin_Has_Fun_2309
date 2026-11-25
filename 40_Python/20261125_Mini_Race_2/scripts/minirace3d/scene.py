@@ -408,7 +408,7 @@ class TrackScene(object):
         white.build(self.root, self.materials["white"])
 
     # ------------------------------------------------------------------ 车
-    def build_car(self):
+    def build_car(self, color=None):
         root = self.root.attachNewNode("car")
         body = MeshBuilder("car_body")
         cabin = MeshBuilder("car_cabin")
@@ -420,7 +420,9 @@ class TrackScene(object):
         for x in (-0.92, 0.92):
             for y in (-1.35, 1.35):
                 dark.add_box(Vec3(x, y, 0.34), (0.14, 0.34, 0.30))
-        body.build(root, self.materials["car_red"])
+        body_material = (self.materials["car_red"] if color is None
+                         else material(tuple(color), specular=0.3))
+        body.build(root, body_material)
         cabin.build(root, self.materials["car_dark"])
         dark.build(root, self.materials["car_dark"])
         return root
@@ -440,5 +442,5 @@ class SceneBuilder(object):
         self.track_scene.build()
         return self.track_scene
 
-    def build_car(self):
-        return self.track_scene.build_car()
+    def build_car(self, color=None):
+        return self.track_scene.build_car(color=color)
