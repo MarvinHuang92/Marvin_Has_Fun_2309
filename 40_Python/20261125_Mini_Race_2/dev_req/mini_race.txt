@@ -218,3 +218,47 @@ tests_track 61项。
 实现：Renderer.set_zoom_level()；App._load_map 在重建 Renderer 前保存 zoom_level，
 重建后恢复；启动仍默认0。F5/HOME 不重建 Renderer，自然保留。
 tests_track 61项仍通过；手动验证 F2 后 (+2) 保留、新窗口默认。
+2026.11.25 第二十三轮（V3.13）Panda3D 3D原型
+
+27.
+需求：按第1条做 Panda3D 原型，物理完全不动；路肩长方体砖0.4h×1.2w、从内边界向外、
+红白相间每色≤5m；上海每个弯曲率极值内侧放红白红柱子(0.12m直径/1m高，下1/3藏路肩)；
+椭圆每弯进弯出弯含两端共8根；椭圆/上海起点龙门架离地4m；黑白格起点线有宽度，
+正向先靠近的近边缘为真正判定线；不做柱子碰撞（内边界空气墙）。
+实现：scripts/minirace3d/（geometry/scene/app3d）+ scripts/main3d.py + 03_Run3D.bat；
+安装panda3d 1.10.16；离屏截图验证；2D物理/测试未改；tests_track 61项仍通过。
+2026.11.25 第二十四轮（V3.13.1）启动菜单
+
+28.
+需求：01_Run.bat 进入后在控制台选 1. 2D界面 2. 3D界面，默认2D。
+实现：01_Run.bat 开头 set /p 菜单；输入2（或3D）调用 03_Run3D.bat，
+其他/回车走原2D启动流程；参数透传。Readme/docs/更新日志更新。
+2026.11.25 第二十五轮（V3.13.2）编码/键盘修复
+
+29.
+问题1：01_Run/03_Run3D 中文菜单在 cmd 下显示乱码，且部分 rem 行被误当命令。
+修复：01_Run.bat/02_Tune.bat/03_Run3D.bat 改为纯 ASCII 文本，菜单英文；
+1=2D（默认），2=3D。
+问题2：3D 真实窗口 MouseWatcher.is_key_down 不存在导致崩溃。
+修复：改用 is_button_down()。已后台启动真实窗口 4s 验证无 traceback。
+2026.11.25 第二十六轮（V3.14.0）3D细节完善
+
+30.
+需求：3D版弯心柱直径/高度都×2，配色不变；圆形场地显示Ø360虚线并在起点画黑白格（纯视觉）；
+车尾陷地、车头视角被引擎盖挡；右下角显示和2D相同缩略图；使用等宽字体避免数字宽度跳动。
+实现：POST_RADIUS 0.12/POST_HEIGHT 2.0；circle guide dashed + start line；车 lookAt z=0、
+前视相机前移抬高；新增minirace3d/minimap.py（面板/轮廓/起点/自车三角）；
+Consolas等宽字体路径修正；README/docs/截图更新。
+2026.11.25 第二十七轮（V3.15.0）3D缩略图/声音
+
+31.
+需求：3D缩略图上下镜像翻转；缩略图放大到1.5倍；3D版加声音。
+实现：MiniMap._to_px 用 (wy-min_y) 保持北向上；WIDTH/HEIGHT 240x170->360x255，
+边距/字体/线宽/三角同步1.5x；App3D复用minirace.audio.Audio，每帧update，
+M静音，HUD提示；destroy关闭音频。README/docs/截图更新。
+2026.11.25 第二十八轮（V3.16.0）3D弯道5要素
+
+32.
+需求：3D版右上方在当前圈速信息下方显示5要素弯道信息。
+实现：App3D 建5个OnscreenText槽+固定橙色小三角；每帧 Track.element_window_at 更新；
+中间橙色高亮，直道横线，圆形无元素时隐藏；等宽字体。README/docs/截图更新。

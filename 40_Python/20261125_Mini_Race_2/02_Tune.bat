@@ -1,5 +1,5 @@
 @echo off
-rem 调参控制台启动器：找一个带 tkinter 的 Python（纯标准库，不需要 pygame）。
+rem Tuning console launcher: find a Python with tkinter (no pygame needed).
 cd /d "%~dp0"
 
 set "PYTHON_CMD="

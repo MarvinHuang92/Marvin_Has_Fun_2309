@@ -3,6 +3,24 @@ rem Python is auto-detected (no prompt). Edit the candidate list below if needed
 rem Requirement: a Python 3.6+ interpreter with pygame installed.
 cd /d "%~dp0"
 
+rem ========== choose renderer ==========
+echo.
+echo   Mini Race 2
+echo   -------------
+echo   1. 2D interface (pygame, default)
+echo   2. 3D interface (Panda3D prototype)
+echo.
+set "RENDER_CHOICE="
+set /p "RENDER_CHOICE=Select [1/2, Enter = 2D]: "
+if "%RENDER_CHOICE%"=="2" (
+    call "%~dp003_Run3D.bat" %*
+    exit /b %errorlevel%
+)
+if /i "%RENDER_CHOICE%"=="3D" (
+    call "%~dp003_Run3D.bat" %*
+    exit /b %errorlevel%
+)
+
 rem ========== pick a Python interpreter that has pygame ==========
 rem Candidates are tried in order; the first one that imports pygame wins.
 set "PYTHON_CMD="
@@ -67,8 +85,6 @@ ping -n 4 127.0.0.1 >nul 2>&1
 
 if not exist "%RUN_LOG%" goto STARTUP_FAILED
 findstr /c:"Traceback" "%RUN_LOG%" >nul 2>&1
-if not errorlevel 1 goto STARTUP_FAILED
-findstr /c:"启动失败" "%RUN_LOG%" >nul 2>&1
 if not errorlevel 1 goto STARTUP_FAILED
 
 exit /b 0
