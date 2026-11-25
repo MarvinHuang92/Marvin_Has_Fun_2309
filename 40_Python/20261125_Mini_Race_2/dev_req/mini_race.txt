@@ -427,3 +427,31 @@ _point_ahead 返回“线段起点 index”，原代码第二次 _point_ahead(po
 51.
 约定：以后只要修改赛道生成器（scripts/build_random_track.py）的规则或输出结构，
 必须自动提升 GENERATOR_VERSION；同版本 seed 才保证可复现。已写入代码注释和 README。
+
+
+2026.11.26 第四十七轮（V4.0.0 06）生成尝试限制参数
+
+52.
+需求：06 生成面板允许设置最大尝试次数、最大尝试时间（秒）；0=该维度不限；
+两者同时0报错。
+实现：FIELDS 增加 Max attempts/Max time s；generate_random_tracks 按次数或时间任一
+先到停止；失败提示实际尝试次数/用时/种子范围；两者0抛 ValueError。管理器cfg保存输入。
+
+
+2026.11.26 第四十八轮（V4.0.0 06）随机种子开关
+
+53.
+需求：06 生成面板增加“使用随机种子”开关；启用后忽略 Seed 输入框并灰掉；
+实际使用种子仍记录在赛道 JSON/种子文件，可复现。
+实现：FIELDS 外增加 random_seed BooleanVar；勾选禁用 seed Entry；生成时用
+random.SystemRandom 取种子并回填 Seed 显示；管理器 generator 保存 random_seed。
+
+
+2026.11.26 第四十九轮（V4.0.0）名次相对距离修正
+
+54.
+问题：2D/3D 名次表用 sim.distance（累计速度里程/odometer）比较 AI 与玩家；
+玩家走宽线/蹭墙后里程虚高，会出现 AI 实际在前却显示 +xxm 落后。
+修复：新增 Track.progress_at（沿中心线从起点量起的里程）、LapTimer.race_distance
+（(lap-1)*圈长+当前圈里程）；玩家和 AI 统一按赛道比赛里程排序/算 gap。
+新增 tests_ai.py 第11项：覆盖 AI race_distance 不受 odometer 污染。

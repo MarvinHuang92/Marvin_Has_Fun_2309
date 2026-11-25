@@ -17,6 +17,7 @@ import copy
 import json
 import math
 import os
+import random
 import sys
 import time
 import tkinter as tk
@@ -41,8 +42,10 @@ FIELDS = [
     ("min_longest", "Min longest (m)", "0"),
     ("max_straight", "Max straight (m, 0=off)", "300"),
     ("hairpin_min", "Hairpins min (0=off)", "1"),
-    ("hairpin_curv", "Hairpin curvature", "0.12"),
+    ("hairpin_angle", "Hairpin angle deg (90-180)", "135"),
     ("diff_limit", "|L-R| max (none/0/N)", "none"),
+    ("attempts", "Max attempts (0=off)", "400"),
+    ("attempt_seconds", "Max time s (0=off)", "0"),
 ]
 
 
@@ -99,6 +102,13 @@ def _unique_id(maps, base):
 
 
 def generate_random_tracks(project, values, count, seed_start, status=None):
+    attempts = int(values["attempts"])
+    attempt_seconds = float(values["attempt_seconds"])
+    if attempts < 0 or attempt_seconds < 0:
+        raise ValueError("尝试次数和尝试时间不能为负数")
+    if attempts == 0 and attempt_seconds == 0:
+        raise ValueError("尝试次数和尝试时间不能同时为 0，至少设置一个限制")
+
     params = copy.deepcopy(generator.DEFAULTS)
     params.update({
         "lap_length_m": [float(values["lap_min"]), float(values["lap_max"])],
@@ -107,12 +117,12 @@ def generate_random_tracks(project, values, count, seed_start, status=None):
         "min_straight_m": float(values["min_straight"]),
         "min_longest_straight_m": float(values["min_longest"]),
         "max_straight_m": float(values["max_straight"]),
-        "hairpin_boundary_curvature": float(values["hairpin_curv"]),
+        "hairpin_min_turn_angle_deg": float(values["hairpin_angle"]),
         "min_hairpin_count": int(values["hairpin_min"]),
         "max_left_right_diff": (
             None if str(values["diff_limit"]).strip().lower() in ("none", "")
             else int(values["diff_limit"])),
-        "max_attempts": int(generator.DEFAULTS["max_attempts"]),
+        "max_attempts": attempts,
     })
     config = tm.load_main_config(project)
     maps = tm.map_list(config)
@@ -121,17 +131,27 @@ def generate_random_tracks(project, values, count, seed_start, status=None):
     for _ in range(int(count)):
         found = None
         seed_start_attempt = seed
-        attempts = int(params["max_attempts"])
-        for _attempt in range(attempts):
+        attempts_made = 0
+        start_time = time.monotonic()
+        while True:
+            if attempts > 0 and attempts_made >= attempts:
+                break
+            if (attempt_seconds > 0
+                    and time.monotonic() - start_time >= attempt_seconds):
+                break
             found = generator._try_seed(seed, params)
+            attempts_made += 1
             if found is not None:
                 break
             seed += 1
         if found is None:
-            seed_end_attempt = seed_start_attempt + attempts - 1
+            seed_end_attempt = seed - 1
+            elapsed = time.monotonic() - start_time
             raise RuntimeError(
-                "已尝试 %d 次仍未找到合规赛道\n种子范围 %d - %d"
-                % (attempts, seed_start_attempt, seed_end_attempt))
+                "已尝试 %d 次、用时 %.1f s 仍未找到合规赛道\n"
+                "种子范围 %d - %d"
+                % (attempts_made, elapsed, seed_start_attempt,
+                   max(seed_start_attempt, seed_end_attempt)))
         track_id = _unique_id(maps, "random_%d" % seed)
         number = _next_number(maps)
         name = "随机赛道 %02d" % (len(results) + 1)
@@ -178,6 +198,10 @@ class TrackManagerGUI(object):
         self.root.title("Mini Race 2 · Track Manager")
         self.root.geometry("1380x860")
         self.values = {}
+        self.value_entries = {}
+        self.random_seed_var = tk.BooleanVar(
+            value=bool((self.manager.get("generator", {}) or {}).get(
+                "random_seed", False)))
         self.sort_key = tk.StringVar(
             value=str(self.manager.get("sort_key", "number")))
         self.sort_reverse = tk.BooleanVar(
@@ -251,12 +275,19 @@ class TrackManagerGUI(object):
                                              sticky=tk.W, padx=4, pady=2)
             saved = (self.manager.get("generator", {}) or {}).get(key)
             var = tk.StringVar(value=str(saved if saved is not None else default))
-            ttk.Entry(gen, textvariable=var, width=12).grid(
-                row=row, column=col * 2 + 1, sticky=tk.W, padx=4)
+            entry = ttk.Entry(gen, textvariable=var, width=12)
+            entry.grid(row=row, column=col * 2 + 1, sticky=tk.W, padx=4)
             self.values[key] = var
+            self.value_entries[key] = entry
+        ttk.Checkbutton(
+            gen, text="Use random seed (ignore Seed field)",
+            variable=self.random_seed_var,
+            command=self._toggle_random_seed).grid(
+            row=4, column=0, columnspan=4, padx=4, pady=6, sticky=tk.W)
         ttk.Button(gen, text="Generate & Add",
-                   command=self.generate).grid(row=3, column=8, padx=8,
+                   command=self.generate).grid(row=4, column=8, padx=8,
                                                pady=6, sticky=tk.E)
+        self._toggle_random_seed()
 
         self.status = ttk.Label(self.root, text="", foreground="#555")
         self.status.pack(fill=tk.X, padx=8, pady=(0, 6))
@@ -401,14 +432,28 @@ class TrackManagerGUI(object):
         self.refresh()
         self._status("下次启动将使用：%s" % map_id)
 
+    def _toggle_random_seed(self):
+        entry = self.value_entries.get("seed")
+        if entry is None:
+            return
+        entry.configure(state=tk.DISABLED if self.random_seed_var.get()
+                        else tk.NORMAL)
+
     def generate(self):
         try:
             values = {key: self.values[key].get().strip()
                       for key, _label, _default in FIELDS}
+            use_random_seed = bool(self.random_seed_var.get())
+            if use_random_seed:
+                seed = random.SystemRandom().randint(1, 999999999)
+                values["seed"] = str(seed)
+                self.values["seed"].set(values["seed"])
+            else:
+                seed = int(values["seed"])
             count = int(values["count"])
-            seed = int(values["seed"])
             self.manager = tm.load_manager(PROJECT)
             self.manager["generator"] = dict(values)
+            self.manager["generator"]["random_seed"] = use_random_seed
             tm.save_manager(self.manager, PROJECT)
             self._status("生成中…")
             self.root.config(cursor="watch")

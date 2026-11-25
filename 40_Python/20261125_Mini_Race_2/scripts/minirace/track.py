@@ -222,6 +222,23 @@ class Track(object):
         self._last_index = best[5]
         return best
 
+    def progress_at(self, x, y):
+        """返回沿比赛方向、从起点量起的中心线里程（米）。"""
+        nearest = self.nearest(x, y)
+        if nearest is None or not self.segments:
+            return 0.0
+        segment_index = int(nearest[5]) % len(self.segments)
+        x0, y0, tx, ty, length, _point_index = self.segments[segment_index]
+        along = (float(x) - x0) * tx + (float(y) - y0) * ty
+        along = max(0.0, min(length, along))
+        cumulative = sum(segment[4] for segment in
+                         self.segments[:segment_index])
+        value = float(cumulative + along)
+        lap_length = float(self.lap_length_m)
+        if lap_length > 1.0:
+            value %= lap_length
+        return value
+
     def resolve_collision(self, vehicle, telemetry, dt):
         """把车限制在赛道内；撞墙时沿墙滑动。返回是否发生碰撞。"""
         if not self.segments:

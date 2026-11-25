@@ -60,34 +60,37 @@
     "pixels_per_meter": 6.0
    },
    {
-    "id": "auto_1",
-    "number": 4,
-    "name": "自动赛道 01",
-    "display_name": "AUTO TRACK 01",
-    "file": "cfg/tracks/track_auto_01.json",
+    "id": "random_794468711",
+    "number": 11,
+    "name": "随机赛道 01",
+    "display_name": "RANDOM TRACK 01",
+    "file": "cfg/tracks/track_random_794468711.json",
     "pixels_per_meter": 6.0,
-    "seed_file": "cfg/seeds/seed_v1.0.0_20261126_022635_20261127.json",
-    "generator_version": "1.0.0"
+    "random": true,
+    "generator_version": "1.1.0",
+    "seed_file": "cfg/seeds/seed_v1.1.0_20261126_035307_794468711.json"
    },
    {
-    "id": "auto_2",
-    "number": 5,
-    "name": "自动赛道 02",
-    "display_name": "AUTO TRACK 02",
-    "file": "cfg/tracks/track_auto_02.json",
+    "id": "random_525780923",
+    "number": 12,
+    "name": "随机赛道 01",
+    "display_name": "RANDOM TRACK 01",
+    "file": "cfg/tracks/track_random_525780923.json",
     "pixels_per_meter": 6.0,
-    "seed_file": "cfg/seeds/seed_v1.0.0_20261126_022635_20261129.json",
-    "generator_version": "1.0.0"
+    "random": true,
+    "generator_version": "1.1.0",
+    "seed_file": "cfg/seeds/seed_v1.1.0_20261126_035431_525780923.json"
    },
    {
-    "id": "auto_3",
-    "number": 6,
-    "name": "自动赛道 03",
-    "display_name": "AUTO TRACK 03",
-    "file": "cfg/tracks/track_auto_03.json",
+    "id": "random_591685757",
+    "number": 13,
+    "name": "随机赛道 01",
+    "display_name": "RANDOM TRACK 01",
+    "file": "cfg/tracks/track_random_591685757.json",
     "pixels_per_meter": 6.0,
-    "seed_file": "cfg/seeds/seed_v1.0.0_20261126_022635_20261133.json",
-    "generator_version": "1.0.0"
+    "random": true,
+    "generator_version": "1.1.0",
+    "seed_file": "cfg/seeds/seed_v1.1.0_20261126_035604_591685757.json"
    }
   ],
   "startup": null

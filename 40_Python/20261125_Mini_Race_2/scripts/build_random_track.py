@@ -22,7 +22,7 @@ import sys
 
 import numpy as np
 from PIL import Image, ImageDraw
-from scipy.optimize import linprog
+from scipy.optimize import linprog, minimize
 from scipy.spatial import cKDTree
 from shapely.geometry import LineString
 
@@ -34,7 +34,7 @@ import track_manager as tm  # noqa: E402
 
 # 生成器独立版本号：只保证同一版本内 seed 可复现。
 # 规则约定：以后任何会改变生成结果/输出结构的修改，都必须提升该版本号。
-GENERATOR_VERSION = "1.0.0"
+GENERATOR_VERSION = "1.1.0"
 
 DEFAULTS = {
     "lap_length_m": [1200.0, 1800.0],
@@ -44,7 +44,7 @@ DEFAULTS = {
     "min_longest_straight_m": 0.0,  # 只限制最长直道；0=不限制
     "max_straight_m": 300.0,  # 0=不限制
     "straight_kappa_threshold": 0.0025,  # 1/m，R > 400 m 视为直道
-    "hairpin_boundary_curvature": 0.12,  # 1/m，内侧边界 R < 8.33 m 视为发卡
+    "hairpin_min_turn_angle_deg": 135.0,  # 发卡弯中心线转角下限（90-180°）
     "min_hairpin_count": 1,  # 至少几个发卡弯；0=不限制
     "max_left_right_diff": None,  # |左弯-右弯|上限；None=不限制，0=必须相等
     "boundary_max_curvature": 0.30,  # 1/m，边界 R > 3.33 m
@@ -108,7 +108,8 @@ def _polygon_edges(turns, rng):
 
 
 def _solve_edges(turns, trims_in, trims_out, corner_lengths, target_lap,
-                 width, rng, max_straight, min_straight):
+                 width, rng, max_straight, min_straight,
+                 min_lap=None, max_lap=None):
     count = len(turns)
     angles = _turn_directions(turns)
     directions = [(math.cos(a), math.sin(a)) for a in angles]
@@ -117,24 +118,32 @@ def _solve_edges(turns, trims_in, trims_out, corner_lengths, target_lap,
     for i in range(count):
         nxt = (i + 1) % count
         lower[i] = trims_out[i] + trims_in[nxt] + min_straight
-        upper[i] = trims_out[i] + trims_in[nxt] + max_straight
+        upper[i] = (trims_out[i] + trims_in[nxt]
+                    + (max_straight if max_straight > 0.0 else 1.0e6))
     trim_total = float(sum(trims_in) + sum(trims_out))
     corner_total = float(sum(corner_lengths))
-    desired_sum = target_lap - corner_total + trim_total
-    if desired_sum < float(np.sum(lower)) - 1e-6:
+    if min_lap is None:
+        min_lap = target_lap
+    if max_lap is None:
+        max_lap = target_lap
+    lower_sum = float(min_lap) - corner_total + trim_total
+    upper_sum = float(max_lap) - corner_total + trim_total
+    if upper_sum < float(np.sum(lower)) - 1e-6:
         return None
-    if desired_sum > float(np.sum(upper)) + 1e-6:
+    if lower_sum > float(np.sum(upper)) + 1e-6:
         return None
     a_eq = np.array([
         [direction[0] for direction in directions],
         [direction[1] for direction in directions],
-        np.ones(count),
     ])
-    b_eq = np.array([0.0, 0.0, desired_sum])
-    cost = rng.uniform(-1.0, 1.0, count)
+    b_eq = np.array([0.0, 0.0])
+    a_ub = np.array([np.ones(count), -np.ones(count)])
+    b_ub = np.array([upper_sum, -lower_sum])
+    cost = -np.ones(count)
     try:
-        result = linprog(cost, A_eq=a_eq, b_eq=b_eq, bounds=list(zip(lower, upper)),
-                         method="highs")
+        result = linprog(cost, A_eq=a_eq, b_eq=b_eq,
+                         A_ub=a_ub, b_ub=b_ub,
+                         bounds=list(zip(lower, upper)), method="highs")
     except ValueError:
         return None
     if not result.success:
@@ -356,6 +365,56 @@ def _start_on_longest_straight(centerline, rng, expected_corners,
     }
 
 
+def _balanced_edge_lengths(turns, trims_in, trims_out, corner_lengths,
+                           target_lap, max_straight, min_straight):
+    """找尽量均匀的边长度；比随机 LP 更容易得到宽敞、简单的凸环。"""
+    count = len(turns)
+    angles = _turn_directions(turns)
+    directions = np.asarray([(math.cos(a), math.sin(a)) for a in angles])
+    lower = np.array([
+        trims_out[i] + trims_in[(i + 1) % count] + min_straight
+        for i in range(count)])
+    upper = np.array([
+        trims_out[i] + trims_in[(i + 1) % count]
+        + (max_straight if max_straight > 0.0 else 1.0e6)
+        for i in range(count)])
+    trim_total = float(np.sum(trims_in) + np.sum(trims_out))
+    target_sum = (float(target_lap) - float(np.sum(corner_lengths))
+                  + trim_total)
+    target = target_sum / float(count)
+    if target < np.max(lower) or target > np.min(upper):
+        target = 0.5 * (np.max(lower) + np.min(upper))
+    seed_result = linprog(np.zeros(count), A_eq=directions.T,
+                          b_eq=np.zeros(2), bounds=list(zip(lower, upper)),
+                          method="highs")
+    if not seed_result.success:
+        return None
+    start = np.asarray(seed_result.x, dtype=np.float64)
+
+    def objective(lengths):
+        return float(np.sum((lengths - target) ** 2))
+
+    def closure(lengths):
+        return np.array([
+            np.sum(lengths * directions[:, 0]),
+            np.sum(lengths * directions[:, 1]),
+        ])
+
+    result = minimize(objective, start, method="SLSQP",
+                      bounds=list(zip(lower, upper)),
+                      constraints=[{"type": "eq", "fun": closure}],
+                      options={"maxiter": 300, "ftol": 1e-10})
+    if not result.success:
+        return None
+    lengths = np.asarray(result.x, dtype=np.float64)
+    if np.any(lengths < lower - 1e-4) or np.any(lengths > upper + 1e-4):
+        return None
+    if np.hypot(np.sum(lengths * directions[:, 0]),
+                np.sum(lengths * directions[:, 1])) > 0.2:
+        return None
+    return lengths
+
+
 def _curvature(points):
     count = len(points)
     result = np.zeros(count)
@@ -406,6 +465,82 @@ def _direction_counts(corners):
     return left, right
 
 
+def _target_turn_sequence(count, rng, required, min_angle_deg):
+    """生成满足“至少 N 个弯的绝对转角 >= 角度”的转角序列。"""
+    if required < 0 or required > count:
+        return None, []
+    if required == 0:
+        return None, []
+    min_angle = math.radians(float(min_angle_deg))
+    target = min(math.pi - 0.06, min_angle + 0.02)
+    if target < min_angle:
+        return None, []
+    if required == 1:
+        signs = [1]
+    elif required == 2:
+        signs = [1, 1]
+    else:
+        signs = [1 if index % 2 == 0 else -1 for index in range(required)]
+    hair_turns = [sign * target for sign in signs]
+    remaining = 2.0 * math.pi - float(sum(hair_turns))
+    ordinary = int(count) - int(required)
+    if ordinary > 0:
+        raw = rng.dirichlet(np.ones(ordinary) * 2.0)
+        other_turns = list(remaining * raw)
+    elif abs(remaining) > 1e-6:
+        return None, []
+    else:
+        other_turns = []
+    turns = np.array(hair_turns + other_turns, dtype=np.float64)
+    rng.shuffle(turns)
+    hair_set = [float(value) for value in hair_turns]
+    hairpin_indices = []
+    for index, value in enumerate(turns):
+        for hair in hair_set:
+            if abs(float(value) - hair) < 1e-9 and index not in hairpin_indices:
+                hairpin_indices.append(index)
+                break
+    if len(hairpin_indices) != required:
+        return None, []
+    if np.any(np.abs(turns) <= 0.02) or np.any(np.abs(turns) >= math.pi - 0.02):
+        return None, []
+    if abs(float(np.sum(turns)) - 2.0 * math.pi) > 1e-5:
+        return None, []
+    return turns, hairpin_indices
+
+
+def _random_turn_sequence(count, rng):
+    """没有发卡数量要求时，生成普通随机正转角闭环。"""
+    raw = rng.dirichlet(np.ones(int(count)) * 2.0)
+    turns = 2.0 * math.pi * raw
+    if np.any(turns <= 0.02) or np.any(turns >= math.pi - 0.02):
+        return None
+    return turns
+
+
+def _corner_turn_angle(points, corner):
+    """取弯道两侧切线夹角，返回绝对角度（弧度）。"""
+    total = len(points)
+    start = int(corner["start"]) % total
+    end = int(corner["end"]) % total
+    prev = points[(start - 1) % total]
+    start_point = points[start]
+    end_point = points[end]
+    nxt = points[(end + 1) % total]
+    before = math.atan2(start_point[1] - prev[1],
+                        start_point[0] - prev[0])
+    after = math.atan2(nxt[1] - end_point[1],
+                       nxt[0] - end_point[0])
+    delta = (after - before + math.pi) % (2.0 * math.pi) - math.pi
+    return abs(delta)
+
+
+def _count_hairpin_turns(points, corners, min_angle_deg):
+    threshold = math.radians(float(min_angle_deg))
+    return sum(1 for corner in corners
+               if _corner_turn_angle(points, corner) >= threshold)
+
+
 def _edges(points, width):
     tangents = np.roll(points, -1, axis=0) - points
     lengths = np.hypot(tangents[:, 0], tangents[:, 1])
@@ -420,9 +555,26 @@ def _try_seed(seed, params):
     min_lap, max_lap = params["lap_length_m"]
     min_width, max_width = params["width_m"]
     min_corners, max_corners = params["corner_count"]
-    width = float(rng.uniform(min_width, max_width))
-    count = int(rng.randint(min_corners, max_corners + 1))
-    target_lap = float(rng.uniform(min_lap, max_lap))
+    required_hairpins = int(params.get("min_hairpin_count", 1))
+    if required_hairpins > 0:
+        # 带发卡的几何在“较窄、较短、弯数较少”的区间更容易满足
+        # 直道长度上限和边界不自交。
+        width = float(rng.uniform(min_width, min(max_width, min_width + 0.8)))
+        count = int(rng.randint(min_corners,
+                                min(max_corners, min_corners + 1) + 1))
+        target_lap = float(rng.uniform(
+            min_lap, min(max_lap, min_lap + 40.0)))
+    else:
+        width = float(rng.uniform(min_width, max_width))
+        count = int(rng.randint(min_corners, max_corners + 1))
+        target_lap = float(rng.uniform(min_lap, max_lap))
+
+    required_hairpins = int(params.get("min_hairpin_count", 1))
+    if required_hairpins < 0 or required_hairpins > count:
+        return None
+    hairpin_angle_deg = float(params.get("hairpin_min_turn_angle_deg", 135.0))
+    if hairpin_angle_deg < 90.0 or hairpin_angle_deg > 180.0:
+        return None
 
     # 随机星形凸多边形：角度 + 半径扰动；顶点按极角排序，天然闭合
     gap = 2.0 * math.pi / float(count)
@@ -496,6 +648,7 @@ def _try_seed(seed, params):
                 and straight > params["max_straight_m"] + 1e-6):
             return None
         straight_lengths.append(float(straight))
+
 
     # 用弯曲线 + 直道拼出高密度中心线
     dense = []
@@ -615,13 +768,16 @@ def _try_seed(seed, params):
                        float(np.max(_boundary_curvature(right))))
     if max_boundary > params["boundary_max_curvature"] + 1e-6:
         return None
-    actual_hairpin_count = _count_hairpins(
-        left, right, corners, params["hairpin_boundary_curvature"])
+    actual_hairpin_count = _count_hairpin_turns(
+        centerline, corners, hairpin_angle_deg)
     if actual_hairpin_count < required_hairpins:
         return None
     left_corners, right_corners = _direction_counts(corners)
     direction_diff = abs(left_corners - right_corners)
     diff_limit = params.get("max_left_right_diff")
+    hairpin_angle = float(params.get("hairpin_min_turn_angle_deg", 135.0))
+    if hairpin_angle < 90.0 or hairpin_angle > 180.0:
+        raise ValueError("hairpin_min_turn_angle_deg 必须在 90-180° 之间")
     if diff_limit is not None and direction_diff > int(diff_limit):
         return None
     try:
@@ -664,7 +820,8 @@ def _try_seed(seed, params):
             "width_m": round(width, 3),
             "corner_post_count": 1,
             "straight_kappa_threshold": params["straight_kappa_threshold"],
-            "hairpin_boundary_curvature": params["hairpin_boundary_curvature"],
+            "hairpin_min_turn_angle_deg": round(
+                float(hairpin_angle_deg), 2),
             "min_hairpin_count": required_hairpins,
             "actual_hairpin_count": actual_hairpin_count,
             "left_corner_count": int(left_corners),
@@ -709,10 +866,14 @@ def _try_seed(seed, params):
                                        for v in straight_lengths],
                 "hairpin_indices": [int(v) for v in hairpin_indices],
                 "hairpin_count": int(actual_hairpin_count),
+                "hairpin_min_turn_angle_deg": round(
+                    float(hairpin_angle_deg), 2),
+                "hairpin_turn_angles_deg": [
+                    round(math.degrees(_corner_turn_angle(centerline, corner)), 2)
+                    for corner in corners],
                 "left_corner_count": int(left_corners),
                 "right_corner_count": int(right_corners),
                 "left_right_diff": int(direction_diff),
-                "hairpin_boundary_curvature": round(max_boundary, 4),
                 "start_direction": start_info["start_direction"],
                 "start_fraction": round(float(start_info["start_fraction"]), 3),
             },
@@ -784,8 +945,10 @@ def generate(seed_start, count, params, out_dir):
                 "max_straight_m": data["reference"]["max_straight_m"],
                 "seed_file": data["reference"]["generator"].get(
                     "seed_file", ""),
-                "hairpin_boundary_curvature":
-                    data["reference"]["generator"]["hairpin_boundary_curvature"],
+                "hairpin_count": data["reference"]["generator"][
+                    "hairpin_count"],
+                "hairpin_min_turn_angle_deg": data["reference"]["generator"][
+                    "hairpin_min_turn_angle_deg"],
             }
             for path, data in results
         ],
@@ -843,11 +1006,12 @@ def main():
                         help="只限制最长直道不得短于该值；0=不限制")
     parser.add_argument("--straight-threshold", type=float,
                         default=DEFAULTS["straight_kappa_threshold"])
-    parser.add_argument("--hairpin-curvature", type=float,
-                        default=DEFAULTS["hairpin_boundary_curvature"])
+    parser.add_argument("--hairpin-turn-angle-deg", type=float,
+                        default=DEFAULTS["hairpin_min_turn_angle_deg"],
+                        help="发卡弯中心线转角下限，90-180°，默认135°")
     parser.add_argument("--hairpin-min-count", type=int,
                         default=DEFAULTS["min_hairpin_count"],
-                        help="至少几个发卡弯；0=不限制，>1 需要更多高曲率弯")
+                        help="至少几个发卡弯；0=不限制，>1 需要更多大转角弯")
     parser.add_argument("--max-left-right-diff", default="none",
                         help="|左弯-右弯|上限；0=严格相等，none=不限制")
     parser.add_argument("--boundary-curvature-max", type=float,
@@ -866,7 +1030,7 @@ def main():
         "min_longest_straight_m": float(args.min_longest_straight),
         "max_straight_m": float(args.max_straight),
         "straight_kappa_threshold": float(args.straight_threshold),
-        "hairpin_boundary_curvature": float(args.hairpin_curvature),
+        "hairpin_min_turn_angle_deg": float(args.hairpin_turn_angle_deg),
         "min_hairpin_count": int(args.hairpin_min_count),
         "max_left_right_diff": (None if str(args.max_left_right_diff).strip().lower()
                                 in ("none", "") else int(args.max_left_right_diff)),

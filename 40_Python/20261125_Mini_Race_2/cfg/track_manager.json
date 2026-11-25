@@ -7,19 +7,22 @@
  "sort_key": "number",
  "sort_reverse": false,
  "generator": {
-  "seed": "92721314",
+  "seed": "591685624",
   "count": "1",
-  "lap_min": "1200",
-  "lap_max": "1800",
-  "width_min": "15",
-  "width_max": "22",
-  "corner_min": "8",
-  "corner_max": "12",
+  "lap_min": "3200",
+  "lap_max": "4000",
+  "width_min": "16",
+  "width_max": "24",
+  "corner_min": "16",
+  "corner_max": "32",
   "min_straight": "12",
   "min_longest": "240",
-  "max_straight": "400",
-  "hairpin_min": "2",
-  "hairpin_curv": "0.12",
-  "diff_limit": "3"
+  "max_straight": "0",
+  "hairpin_min": "1",
+  "hairpin_angle": "160",
+  "diff_limit": "none",
+  "attempts": "0",
+  "attempt_seconds": "5",
+  "random_seed": true
  }
 }

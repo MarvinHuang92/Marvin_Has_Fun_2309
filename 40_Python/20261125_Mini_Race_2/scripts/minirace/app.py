@@ -343,8 +343,10 @@ class App(object):
                     and self.sim.track.kind == "circuit"):
                 entries = [(car.label, car.race_distance, car.best_lap)
                            for car in self.ai_manager.cars]
+                player_distance = self.lap_timer.race_distance(
+                    self.sim.vehicle.x, self.sim.vehicle.y)
                 visible, _player = build_standings(
-                    self.sim.distance, self.lap_timer.best, entries)
+                    player_distance, self.lap_timer.best, entries)
                 stats["standings"] = visible
             if self.sim.track is not None and self.sim.track.elements:
                 window = self.sim.track.element_window_at(

@@ -423,6 +423,7 @@ command = driver.decide(observation)   # DriveCommand(throttle, brake, steer)
 - 2D/3D 都会显示 AI 车辆（2D 彩色多边形/缩略图标记，3D 彩色车模）；
 - 2D/3D 右上方名次表（最多 4 行：第一名 + 玩家前后；圆形不显示）：
   领先 AI 的差距为负（`-100m` / `-1LAP`），落后为正（`+40m` / `+1LAP`），
+  距离按“已完成圈数 × 圈长 + 当前圈沿中心线里程”计算，不按累计行驶里程；
   `Player` 自己显示 `--`；第三列是最快单圈；
 - 3D 每辆 AI 上方显示 `AI_01`/`AI_02` 标签，3D 缩略图显示所有 AI 位置；
 - 3D 按住 `B` 时摄像头绕车辆中心转到车前向后看，松开恢复正常视角（2D 无此功能）；
@@ -457,7 +458,7 @@ python scripts\build_random_track.py ^
   --min-straight 12 ^
   --min-longest-straight 0 ^
   --max-straight 300 ^
-  --hairpin-curvature 0.12 ^
+  --hairpin-turn-angle-deg 135 ^
   --hairpin-min-count 1 ^
   --max-left-right-diff none ^
   --boundary-curvature-max 0.30
@@ -471,6 +472,14 @@ python scripts\build_random_track.py ^
 - `--max-left-right-diff`：`|左弯数-右弯数|` 的上限；
   `0`=左右弯数量必须严格相等；`none`=不限制（默认）。
   设成很小的值可能因为赛道路径约束而生成失败。
+
+06 生成面板另有：
+
+- `Use random seed`：勾选后忽略 Seed 输入框（输入框变灰），每次生成使用随机种子；
+  实际使用的种子仍会写入赛道 JSON/种子文件，之后可关掉开关手动复现；
+- `Max attempts (0=off)`：最多尝试多少个 seed；
+- `Max time s (0=off)`：最多尝试多少秒；
+- 两者都设 0 会直接报错，至少需要一个非 0 限制。
 
 每条赛道 JSON 的 `reference.generator` 保存种子和全部参数；
 其中 `reference.generator.version` 是**生成器独立版本号**（当前 `1.0.0`），
@@ -555,7 +564,7 @@ seed_v1.0.0_20261126_143012_20261127.json
 | `scripts/build_random_track.py` | 按边界条件/种子随机生成闭环赛道 |
 | `scripts/track_manager.py` | 赛道启用/禁用/启动选择公共逻辑 |
 | `scripts/track_manager_gui.py` | 06 赛道候选管理器 GUI |
-| `scripts/tests_generated_tracks.py` | 自动赛道边界条件校验 |
+| `scripts/tests_generated_tracks.py` | 当前随机赛道边界条件校验 |
 | `scripts/tune_ai.py` | AI 调参控制台（编辑 cfg/ai.json + headless 算力测试） |
 | `scripts/minirace3d/` | 3D 场景/几何/相机/HUD（不影响物理） |
 | `scripts/minirace/driver.py` | AI 驾驶接口 + 规则驾驶员（纯数学） |
@@ -566,8 +575,8 @@ seed_v1.0.0_20261126_143012_20261127.json
 | `scripts/tests_physics.py` | 物理自检（不需要 pygame，23 项） |
 | `scripts/tests_track.py` | 赛道/地图/圈速/弯道窗口/相机/逆行/预设/缩放自检（纯数学，65 项） |
 | `scripts/tests_audio.py` | 音频冒烟测试（需要 pygame，用 dummy 音频设备，16 项） |
-| `scripts/tests_ai.py` | AI 接口/配色/名次/闭环/多 AI 独立性/起跑朝向自检（纯数学，10 项） |
-| `scripts/tests_generated_tracks.py` | 自动赛道边界条件/种子/自交/发卡数量/直道上下限/左右弯差/拉直后直道/编号/柱数/起点中点/朝向校验（64 项） |
+| `scripts/tests_ai.py` | AI 接口/配色/名次/闭环/多 AI 独立性/起跑朝向/赛道里程自检（纯数学，11 项） |
+| `scripts/tests_generated_tracks.py` | 当前随机赛道边界条件/种子/自交/中心线转角发卡数量/直道上下限/左右弯差/拉直后直道/编号/柱数/起点中点/朝向校验（64 项） |
 | `scripts/tests_track_manager.py` | 启用/禁用、禁用后找下一条、无可用赛道、startup 一次性、随机赛道增删、种子文件、种子文件名圈速键/迁移（18 项） |
 | `scripts/tests_diagnostics.py` | 诊断模式自检（构造速度跳变/换挡抖动/撞界/NaN/自旋等，9 项） |
 | `scripts/probe_physics.py` | 标定探针：车辆/传动参数、加速、制动、发动机制动、过弯表 |

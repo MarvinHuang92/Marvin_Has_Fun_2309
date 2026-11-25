@@ -113,10 +113,11 @@ def test_maps_config():
     maps = config.get("maps", {})
     ids = [item.get("id") for item in maps.get("list", [])]
     numbers = [item.get("number") for item in maps.get("list", [])]
-    check("地图顺序：圆形(0) / 椭圆(1) / 上海(2) / 宝山(3) / 自动(4-6)",
-          ids == ["circle", "oval", "shanghai", "baoshan",
-                  "auto_1", "auto_2", "auto_3"]
-          and numbers == [0, 1, 2, 3, 4, 5, 6],
+    check("地图顺序：4 张固定地图 + 随机地图按编号追加",
+          ids[:4] == ["circle", "oval", "shanghai", "baoshan"]
+          and all(item.get("random") for item in maps.get("list", [])[4:])
+          and numbers == sorted(numbers)
+          and len(set(numbers)) == len(numbers),
           "ids=%s numbers=%s" % (ids, numbers))
     for item in maps.get("list", []):
         path = os.path.join(PROJECT, item.get("file", ""))

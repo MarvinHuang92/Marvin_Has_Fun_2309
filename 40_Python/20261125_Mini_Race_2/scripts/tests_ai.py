@@ -133,16 +133,33 @@ def test_multi_ai_independent():
 
 def test_ai_spawn_heading():
     base = load_config(PROJECT_DIR)
-    config = _config_for_map(base, "auto_3")
+    config = _config_for_map(base, "shanghai")
     params = _merge_ai_config({"count": 1, "spawn_spacing_m": 12.0})
     manager = AIManager(config, params, PROJECT_DIR)
     car = manager.cars[0]
     expected = car.sim.track.start[2]
     actual = car.sim.vehicle.heading
     delta = (actual - expected + math.pi) % (2.0 * math.pi) - math.pi
-    check("AI 在 auto_3 起跑时朝向与前进方向一致",
+    check("AI 起跑时朝向与前进方向一致",
           abs(delta) < 0.15,
           "expected=%.3f actual=%.3f" % (expected, actual))
+
+
+def test_race_distance_uses_track_progress():
+    base = load_config(PROJECT_DIR)
+    config = _config_for_map(base, "oval")
+    params = _merge_ai_config({"count": 1, "spawn_spacing_m": 12.0})
+    manager = AIManager(config, params, PROJECT_DIR)
+    car = manager.cars[0]
+    normal = car.race_distance
+    saved = car.sim.distance
+    car.sim.distance = saved + 5000.0
+    after_odometer = car.race_distance
+    car.sim.distance = saved
+    check("AI 相对距离按赛道里程而非累计里程计算",
+          abs(after_odometer - normal) < 1e-6
+          and 0.0 <= normal <= car.sim.track.lap_length_m + 1e-6,
+          "normal=%.2f after_bad_odometer=%.2f" % (normal, after_odometer))
 
 
 def main():
@@ -150,6 +167,7 @@ def main():
     test_rule_driver_closed_loop()
     test_multi_ai_independent()
     test_ai_spawn_heading()
+    test_race_distance_uses_track_progress()
     failed = [name for name, ok, _ in _results if not ok]
     print()
     print("%d/%d 项通过" % (len(_results) - len(failed), len(_results)))

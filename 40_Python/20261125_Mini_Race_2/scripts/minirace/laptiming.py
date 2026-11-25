@@ -73,6 +73,14 @@ class LapTimer(object):
     def current_time(self, sim_time):
         return max(0.0, float(sim_time) - self._lap_start)
 
+    def race_distance(self, x, y):
+        """比赛总里程：已完成圈数 × 圈长 + 当前圈沿中心线里程。"""
+        if not self.enabled or self.track is None:
+            return 0.0
+        lap_length = float(self.track.lap_length_m)
+        return ((max(1, int(self.lap)) - 1) * lap_length
+                + self.track.progress_at(x, y))
+
     def update(self, sim_time, x, y):
         """每个物理步调用；返回本步是否完成了一圈。"""
         if not self.enabled:

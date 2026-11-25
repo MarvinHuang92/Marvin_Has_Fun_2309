@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-"""校验 cfg/tracks/track_auto_*.json 是否满足自动生成边界条件。"""
-import glob
+"""校验 cfg/sim.json 中当前随机赛道是否满足生成边界条件。"""
 import json
 import math
 import os
@@ -29,8 +28,17 @@ def check(name, condition, detail=""):
 
 
 def main():
-    files = sorted(glob.glob(os.path.join(PROJECT, "cfg", "tracks", "track_auto_*.json")))
-    check("自动赛道至少生成 3 条", len(files) >= 3, "files=%d" % len(files))
+    config_path = os.path.join(PROJECT, "cfg", "sim.json")
+    with open(config_path, "r", encoding="utf-8") as handle:
+        config = json.load(handle)
+    files = []
+    for item in config["maps"]["list"]:
+        if not item.get("random"):
+            continue
+        path = os.path.join(PROJECT, item.get("file", ""))
+        if os.path.isfile(path):
+            files.append(path)
+    check("随机赛道至少生成 3 条", len(files) >= 3, "files=%d" % len(files))
     for path in files:
         name = os.path.basename(path)
         with open(path, "r", encoding="utf-8") as handle:
@@ -67,19 +75,21 @@ def main():
             min_longest <= 0.0
             or float(ref.get("start_straight_length_m", 0.0))
             >= min_longest - 1e-6)
-        max_boundary = max(
-            float(np.max(generator._boundary_curvature(left))),
-            float(np.max(generator._boundary_curvature(right))))
-        check("%s：发卡弯边界曲率 %.3f ≥ %.3f" % (
-            name, max_boundary,
-            params["hairpin_boundary_curvature"]),
-            max_boundary >= params["hairpin_boundary_curvature"] - 1e-4
-            or int(params.get("min_hairpin_count", 1)) == 0)
+        min_hairpins = int(params.get("min_hairpin_count", 0))
+        actual_hairpins = int(ref.get("actual_hairpin_count", 0))
         check("%s：发卡弯数量 %d ≥ %d" % (
-            name, int(ref.get("actual_hairpin_count", 0)),
-            int(ref.get("min_hairpin_count", 1))),
-            int(ref.get("actual_hairpin_count", 0))
-            >= int(ref.get("min_hairpin_count", 1)))
+            name, actual_hairpins, min_hairpins),
+            actual_hairpins >= min_hairpins)
+        hairpin_angles = ref.get("generator", {}).get(
+            "hairpin_turn_angles_deg", []) or []
+        hairpin_threshold = float(params.get(
+            "hairpin_min_turn_angle_deg", 135.0))
+        qualified = sum(
+            1 for angle in hairpin_angles
+            if abs(float(angle)) >= hairpin_threshold - 1e-6)
+        check("%s：中心线转角 ≥ %.0f° 的弯 %d 个" % (
+            name, hairpin_threshold, qualified),
+            min_hairpins == 0 or qualified >= min_hairpins)
         generator_info = ref.get("generator", {})
         check("%s：生成器版本 %s" % (
             name, generator.GENERATOR_VERSION),
@@ -93,6 +103,9 @@ def main():
             name, left_count, right_count, abs(left_count - right_count),
             "none" if diff_limit is None else diff_limit),
             diff_ok and left_count + right_count == ref["corner_count"])
+        max_boundary = max(
+            float(np.max(generator._boundary_curvature(left))),
+            float(np.max(generator._boundary_curvature(right))))
         check("%s：边界曲率 %.3f ≤ %.3f" % (
             name, max_boundary, params["boundary_max_curvature"]),
             max_boundary <= params["boundary_max_curvature"] + 1e-4)

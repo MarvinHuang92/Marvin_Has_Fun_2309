@@ -123,7 +123,8 @@ class AICar(object):
 
     @property
     def race_distance(self):
-        return self.start_offset_m + self.sim.distance
+        return self.lap_timer.race_distance(
+            self.sim.vehicle.x, self.sim.vehicle.y)
 
     @property
     def best_lap(self):

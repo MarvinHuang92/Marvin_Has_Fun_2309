@@ -491,8 +491,10 @@ class App3D(ShowBase):
                 and self.sim.track.kind == "circuit"):
             entries = [(car.label, car.race_distance, car.best_lap)
                        for car in self.ai_manager.cars]
+            player_distance = self.lap_timer.race_distance(
+                self.sim.vehicle.x, self.sim.vehicle.y)
             visible, player_row = build_standings(
-                self.sim.distance, self.lap_timer.best, entries)
+                player_distance, self.lap_timer.best, entries)
             for index, item in enumerate(self.hud_standings):
                 if index < len(visible):
                     row = visible[index]
