@@ -164,15 +164,31 @@
     "master_volume": 0.35,
     "engine_volume": 0.9,
     "slip_volume": 0.7,
+    "startup_delay_s": 0.6,
+    "fade_in_s": 0.4,
     "sample_pack": {
       "enabled": true,
-      "engine_file": "sounds/引擎声音.wav",
-      "loop_start_s": null,
-      "loop_seconds": 0.5,
+      "engine_file": "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-1.wav",
+      "run_engine_files": [
+        "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-8.wav",
+        "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-9.wav",
+        "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-10.wav",
+        "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-11.wav",
+        "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-12.wav",
+        "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-13.wav"
+      ],
+      "shift_file": "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-gear-shift-1.wav",
+      "run_engine_frequencies": [73.5, 82.5, 92.5, 104.0, 116.5, 131.0],
+      "run_loop_seconds": 1.5,
+      "pitch_steps": 64,
+      "idle_pitch_factor": 0.95,
+      "loop_start_s": 0.0,
+      "loop_seconds": 4.0,
       "base_rpm": 2400.0,
       "min_pitch_factor": 0.45,
       "max_pitch_factor": 2.6,
-      "target_peak": 0.55
+      "target_peak": 0.55,
+      "crash_volume": 0.85
     }
   },
   "diagnostics": {

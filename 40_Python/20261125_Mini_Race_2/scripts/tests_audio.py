@@ -14,6 +14,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import wave
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -49,10 +50,13 @@ def _write_test_wav(path, rate=22050, seconds=2.0):
 
 
 class FakeTelemetry(object):
-    def __init__(self, rpm, throttle, slip):
+    def __init__(self, rpm, throttle, slip, gear=1, speed=0.0, wall=False):
         self.rpm = rpm
         self.throttle = throttle
         self.slip_amount = slip
+        self.gear = gear
+        self.speed_abs = speed
+        self.wall_hit = wall
 
 
 def main():
@@ -63,7 +67,8 @@ def main():
         print("无法导入 pygame/音频模块：%s" % exc)
         return 1
 
-    audio = Audio({})
+    audio = Audio({"sample_pack": {"enabled": False},
+                   "startup_delay_s": 0.0, "fade_in_s": 0.0})
     check("音频初始化（%d 档音色）" % NUM_PITCHES,
           audio.enabled and len(audio.engine_sounds) == NUM_PITCHES,
           "enabled=%s, sounds=%d" % (audio.enabled, len(audio.engine_sounds)))
@@ -105,6 +110,21 @@ def main():
     audio.close()
     check("关闭后停止播放", not audio._chan_a.get_busy())
 
+    # 启动延迟：开局先静音，延迟结束后才淡入
+    delayed = Audio({"sample_pack": {"enabled": False},
+                     "startup_delay_s": 0.12, "fade_in_s": 0.10})
+    delayed.update(FakeTelemetry(3000.0, 0.8, 0.0))
+    silent_at_start = (not delayed._chan_a.get_busy()
+                       and not delayed._chan_idle.get_busy())
+    time.sleep(0.30)
+    delayed.update(FakeTelemetry(3000.0, 0.8, 0.0))
+    check("启动延迟结束后才淡入发动机声",
+          silent_at_start and delayed._chan_a.get_busy()
+          and delayed._chan_a.get_volume() > 0.0,
+          "silent=%s, volume=%.2f" % (silent_at_start,
+                                      delayed._chan_a.get_volume()))
+    delayed.close()
+
     off = Audio({"enabled": False})
     check("配置关闭音频时安全降级", not off.enabled)
     off.update(FakeTelemetry(3000.0, 1.0, 1.0))
@@ -116,6 +136,7 @@ def main():
         wav_path = os.path.join(tmp, "engine_test.wav")
         _write_test_wav(wav_path)
         sample = Audio({
+            "startup_delay_s": 0.0, "fade_in_s": 0.0,
             "sample_pack": {
                 "enabled": True,
                 "engine_file": "engine_test.wav",
@@ -138,7 +159,58 @@ def main():
                       sample.engine_sounds[-1].get_length()))
         sample.close()
 
+        # 分组采样：怠速 loop-1 + 运行 loop-8..13 + 换挡采样
+        idle_path = os.path.join(tmp, "idle.wav")
+        shift_path = os.path.join(tmp, "shift.wav")
+        _write_test_wav(idle_path)
+        _write_test_wav(shift_path)
+        run_paths = []
+        for index in range(8, 14):
+            path = os.path.join(tmp, "run_%d.wav" % index)
+            _write_test_wav(path)
+            run_paths.append(path)
+        grouped = Audio({
+            "startup_delay_s": 0.0, "fade_in_s": 0.0,
+            "sample_pack": {
+                "enabled": True,
+                "engine_file": "idle.wav",
+                "run_engine_files": ["run_%d.wav" % index
+                                     for index in range(8, 14)],
+                "shift_file": "shift.wav",
+                "target_peak": 0.5,
+            },
+        }, project_dir=tmp)
+        check("分组采样生成 64 档 RPM 音高表（+怠速循环）",
+              grouped.enabled and grouped.engine_source == "sample_groups"
+              and grouped.pitch_steps >= 64
+              and len(grouped.engine_sounds) == grouped.pitch_steps
+              and grouped.sample_run_count == 6
+              and grouped.idle_sound is not None,
+              "source=%s, sounds=%d" % (grouped.engine_source,
+                                        len(grouped.engine_sounds)))
+        if grouped.enabled:
+            grouped.update(FakeTelemetry(900.0, 0.0, 0.0, gear=1, speed=0.0))
+            check("怠速通道开始循环",
+                  grouped._chan_idle.get_busy()
+                  and grouped._chan_idle.get_volume() > 0.0,
+                  "volume=%.3f" % grouped._chan_idle.get_volume())
+            grouped.update(FakeTelemetry(3200.0, 0.8, 0.0, gear=2, speed=12.0))
+            check("运行分组双通道交叉淡化",
+                  grouped._chan_a.get_busy() and grouped._chan_b.get_busy(),
+                  "volumes=(%.2f,%.2f)" % (
+                      grouped._chan_a.get_volume(), grouped._chan_b.get_volume()))
+            check("换挡采样触发",
+                  grouped.shift_sound is not None
+                  and grouped._chan_shift.get_busy())
+            grouped.update(FakeTelemetry(5000.0, 0.8, 0.0, gear=2, speed=15.0,
+                                         wall=True))
+            check("撞墙时播放合成砰声",
+                  grouped.crash_sound is not None
+                  and grouped._chan_crash.get_busy())
+        grouped.close()
+
         fallback = Audio({
+            "startup_delay_s": 0.0, "fade_in_s": 0.0,
             "sample_pack": {"enabled": True, "engine_file": "missing.wav"},
         }, project_dir=tmp)
         check("采样包文件缺失时回退到合成声",

@@ -1,4 +1,4 @@
-# Mini Race 2 · 车辆模拟器 V3.16.0
+# Mini Race 2 · 车辆模拟器 V3.17.2
 
 一个用 **pygame** 写的俯视车辆模拟器，目标是将来做成 **"无限生成赛道 + AI 自主驾驶"** 的
 模拟器原型。V1.0 从旧练习程序 `Car.py` 重构；V2.0 换上了**真正的 2 自由度车辆动力学**
@@ -16,7 +16,7 @@ V3.5 在 `F2` 选图提示里显示该赛道的**全长和最快记录**（没�
 过线后 5 秒防重复），倒挡相机翻转，增加 `[WRONG WAY]` 逆行提示，
 并加入 **车辆预设 1 买菜车 / 2 性能车 / 3 超跑 / 4 自定义**。V3.7 把 HUD 的 G 力球方向翻转
 （前↔后、左↔右），并把**性能车**预设的峰值功率提高到 1.25 倍（约 244 kW）；V3.8 再把性能车
-100-0 制动距离调到约 **35 m**，并把性能报告里的测试场地文字更新为 **6.0 km**；V3.9 给性能车增加**第 7 个前进挡**（齿比更密，扭矩曲线不变）；V3.10 给**超跑**占位 **8 个前进挡**，除齿比外仍是买菜车参数；V3.11 新增 **7 档显示倍率**（`-` / `=`，含小键盘），HUD VIEW 后显示 `(+n)`/`(-n)`；V3.12 让 **F2 切图保留倍率**，关闭窗口后才恢复默认；V3.13 增加 **Panda3D 3D 显示原型**（物理层完全复用，路肩/弯心柱/龙门架/黑白起点线）；V3.13.1 让 `01_Run.bat` 先选 2D/3D（默认 2D）；V3.14 完善 3D：柱子×2、圆形虚线/起点格、缩略图、等宽字体、车/相机修正；V3.15 修正 3D 缩略图上下镜像并放大 1.5×，同时接入 3D 发动机/打滑声音（M 静音）；V3.16 在 3D HUD 圈速信息下方增加 5 要素弯道窗口。
+100-0 制动距离调到约 **35 m**，并把性能报告里的测试场地文字更新为 **6.0 km**；V3.9 给性能车增加**第 7 个前进挡**（齿比更密，扭矩曲线不变）；V3.10 给**超跑**占位 **8 个前进挡**，除齿比外仍是买菜车参数；V3.11 新增 **7 档显示倍率**（`-` / `=`，含小键盘），HUD VIEW 后显示 `(+n)`/`(-n)`；V3.12 让 **F2 切图保留倍率**，关闭窗口后才恢复默认；V3.13 增加 **Panda3D 3D 显示原型**（物理层完全复用，路肩/弯心柱/龙门架/黑白起点线）；V3.13.1 让 `01_Run.bat` 先选 2D/3D（默认 2D）；V3.14 完善 3D：柱子×2、圆形虚线/起点格、缩略图、等宽字体、车/相机修正；V3.15 修正 3D 缩略图上下镜像并放大 1.5×，同时接入 3D 发动机/打滑声音（M 静音）；V3.16 在 3D HUD 圈速信息下方增加 5 要素弯道窗口；V3.17 换用 CC0 引擎采样包，并加入换挡/撞墙声；V3.17.1 开局延迟声音并淡入；V3.17.2 音高表降为 64 档并修复切换时的断续。
 
 ![赛道与 HUD](docs/images/hud.png)
 
@@ -127,7 +127,7 @@ python scripts\main3d.py --map oval --screenshot data\3d_oval.png
 - 椭圆/上海起点龙门架：横梁底部离地 4 m；
 - 圆形场地：Ø360 m 白色虚线参考圆 + 起点黑白格（纯视觉）；
 - 右下角缩略图：360×255（2D 的 1.5 倍）、世界北向朝上；
-- 声音：接入 2D 的发动机/打滑音效，`M` 静音；
+- 声音：发动机/打滑沿用 2D，换挡与撞墙声由共享 `Audio` 播放，`M` 静音；
 - 右上角 LAP/TIME/BEST 下方显示 5 要素弯道窗口（中间橙色 + 小三角）；
 - 起点黑白格有纵向宽度，正向先靠近的近边缘就是现有计时判定线；
 - `C` 切换车尾追车/车头前视，`F2` 切图，其余驾驶键同前。
@@ -312,9 +312,15 @@ HUD 显示：速度（km/h + vx/vy）、**挡位与转速（带转速表/红线�
 | | `friction_base` / `friction_per_rpm` | 16 / 0.005 | 内摩擦（发动机制动来源） |
 | `brakes` | `decel_limit` / `front_bias` | **13.5 m/s²** / 0.62 | 刹车目标减速度 / 前轴制动力占比 |
 | `audio` | `enabled` / `master_volume` | true / 0.35 | 音频总开关 / 总音量 |
-| | `sample_pack.engine_file` | `sounds/引擎声音.wav` | 可选采样包 WAV（不存在就回退合成声） |
-| | `sample_pack.loop_seconds` / `base_rpm` | 0.5 s / 2400 | 自动循环段长度 / 采样对应的转速 |
-| | `sample_pack.min_pitch_factor` / `max_pitch_factor` | 0.45 / 2.60 | 变调倍率上下限 |
+| | `sample_pack.engine_file` | `sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-1.wav` | 怠速循环 WAV |
+| | `sample_pack.run_engine_files` | `loop-8.wav`~`loop-13.wav` | 运行组 6 段，按 RPM 交叉淡化 |
+| | `sample_pack.shift_file` | `sounds/.../soundza-gear-shift-1.wav` | 换挡声 |
+| | `sample_pack.run_engine_frequencies` | `[73.5, ...]` | 运行素材主频，用于生成按 RPM 正比的音高表 |
+| | `sample_pack.pitch_steps` | 64 | 音高表档数（越大越平滑，内存/启动换） |
+| | `sample_pack.idle_pitch_factor` | 0.95 | 怠速采样变调系数 |
+| | `sample_pack.crash_volume` | 0.85 | 撞墙合成声音量 |
+| `audio.startup_delay_s` / `fade_in_s` | 0.6 / 0.4 | 开局先静音 0.6 s，再用 0.4 s 淡入 |
+| | `sample_pack.loop_seconds` / `base_rpm` | 4.0 s / 2400 | 旧单文件模式下的循环长度 / 采样转速 |
 
 ### 实测（`python scripts/probe_physics.py`）
 
@@ -328,29 +334,58 @@ HUD 显示：速度（km/h + vx/vy）、**挡位与转速（带转速表/红线�
 
 ## 音频素材（可选采样包）
 
-默认**不需要任何音频文件**：发动机/打滑声都是启动时用标准库合成的（32 档音色交叉淡化）。
-如果希望用真实录音，可以把 WAV 放到 `sounds/` 并在 `cfg/sim.json` 里配置：
+默认**不需要任何音频文件**：没有 `sounds/` 时，发动机用标准库合成 32 档音色，
+打滑声也由程序合成，克隆仓库即可运行。
+
+本机当前配置使用 Soundza 的
+[Car Engine, Gear Shift & Hum Loops](https://soundza.com/packs/car-engine-gear-shift-and-hum-loops)
+（CC0 素材包，含 13 段引擎循环、13 段换挡/手刹音）：
+
+- 怠速：`soundza-car-engine-loop-1.wav` 循环（0.95× 变调，贴近 900 rpm）；
+- 运行：`soundza-car-engine-loop-8.wav` ~ `loop-13.wav` 六段作为音色素材，
+  按 RPM 目标点火频率 `rpm/30` 生成 64 档音高表，再在相邻档之间交叉淡化；
+- 换挡：检测挡位变化，播放 `soundza-gear-shift-1.wav` 一次；
+- 打滑：采样包没有合适胎噪，继续使用原来的合成尖叫音；
+- 撞墙：程序合成低频“砰”声，音量参考碰撞前速度，带 0.35 s 冷却。
+
+`cfg/sim.json` 的分组配置：
 
 ```json
 "audio": {
+  "startup_delay_s": 0.6,
+  "fade_in_s": 0.4,
   "sample_pack": {
     "enabled": true,
-    "engine_file": "sounds/引擎声音.wav",
-    "loop_seconds": 0.5,
-    "base_rpm": 2400,
-    "min_pitch_factor": 0.45,
-    "max_pitch_factor": 2.6
+    "engine_file": "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-1.wav",
+    "run_engine_files": [
+      "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-8.wav",
+      "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-9.wav",
+      "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-10.wav",
+      "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-11.wav",
+      "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-12.wav",
+      "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-13.wav"
+    ],
+    "shift_file": "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-gear-shift-1.wav",
+    "run_engine_frequencies": [73.5, 82.5, 92.5, 104.0, 116.5, 131.0],
+    "run_loop_seconds": 1.5,
+    "pitch_steps": 64,
+    "idle_pitch_factor": 0.95,
+    "target_peak": 0.55,
+    "crash_volume": 0.85
   }
 }
 ```
 
-- 文件存在且是未压缩 PCM WAV（8/16/24/32-bit，单/双声道，任意采样率）时，程序会
-  **自动挑一段最平稳的片段**做无缝循环（首尾 20 ms 交叉淡化），再生成 32 档变调音色；
-  文件缺失/格式不支持时**自动回退合成声**并写日志，不会导致启动失败。
-- `loop_start_s` 可以手动指定循环起点（秒）；`base_rpm` 是采样对应的转速，用来换算变调倍率。
-- **`sounds/` 已加入 `.gitignore`，素材不随代码提交**。请只使用自己录制/CC0/已获授权的素材；
-  本机当前素材来源与许可说明见 [`docs/音频素材与许可.md`](docs/音频素材与许可.md)。
-  个人练习之外（分享构建、公开仓库、视频）请先确认授权，或换回合成声/CC0 素材。
+- 游戏开局先静音 `startup_delay_s`（默认 0.6 s），再用 `fade_in_s`（默认 0.4 s）淡入，避开启动瞬间的爆音；
+- 支持未压缩 PCM WAV（8/16/24/32-bit，单/多声道，任意采样率）；程序自动混成单声道并重采样到混音器采样率；
+- 分组模式会按 RPM 目标频率重采样：目标点火频率 `rpm/30`，用 8~13 段中自然频率
+  最接近的素材作为音色源，再生成 64 档音高表，因此低转更低、高转更高；
+- 64 档相邻档之间约 3.6% 频率差；切换时只替换不在目标集合里的 voice，另一个 voice 继续发声，避免两路同时重启造成断续；
+- `run_engine_frequencies` 是 8~13 段的实测主频，用于选源和变调；`idle_pitch_factor` 是怠速变调系数；
+- 如果把 `run_engine_files` 留空，会回退到旧的单文件模式（自动挑平稳段 + 32 档变调）；
+- 文件缺失/格式不支持时自动回退到程序化合成声，不影响启动；
+- **`sounds/` 已加入 `.gitignore`，素材不随代码提交**。本机素材来源/许可说明见
+  [`docs/音频素材与许可.md`](docs/音频素材与许可.md)。
 
 ## 目录约定
 
@@ -370,7 +405,7 @@ HUD 显示：速度（km/h + vx/vy）、**挡位与转速（带转速表/红线�
 | `scripts/minirace/` | 模拟器代码（动力学、输入、模拟、渲染、音频、存储、性能用例） |
 | `scripts/tests_physics.py` | 物理自检（不需要 pygame，23 项） |
 | `scripts/tests_track.py` | 赛道/地图/圈速/弯道窗口/相机/逆行/预设/缩放自检（纯数学，61 项） |
-| `scripts/tests_audio.py` | 音频冒烟测试（需要 pygame，用 dummy 音频设备，10 项） |
+| `scripts/tests_audio.py` | 音频冒烟测试（需要 pygame，用 dummy 音频设备，16 项） |
 | `scripts/tests_diagnostics.py` | 诊断模式自检（构造速度跳变/换挡抖动/撞界/NaN/自旋等，9 项） |
 | `scripts/probe_physics.py` | 标定探针：车辆/传动参数、加速、制动、发动机制动、过弯表 |
 | `scripts/build_track.py` | 构建期工具：`cfg/track.json`；`--circle` 圆形；`--oval` 椭圆 |
@@ -464,7 +499,7 @@ telemetry = sim.step_raw(0.9, 0.0, 0.4)                   # 或直接给踏板/�
   所以打滑时只做"力饱和 + 需求超限判定 + 转速近似抬升"，不是完整的轮速动力学。
 - 没有横向载荷转移、没有差速器（前后轴扭矩固定分配，超出附着就丢弃）。
 - 发动机/传动是"准静态"模型：没有发动机转动惯量、涡轮迟滞、变矩器。
-- 声音默认是程序合成的（32 档音色交叉淡化）；如果 `sounds/` 放了采样包则用真实录音，
+- 没有采样包时声音是程序合成的（32 档音色交叉淡化）；`sounds/` 有采样包时按 64 档 RPM 音高表播放，
   两者都不能实时变调，转速快速扫动时可能有轻微"阶梯感"。首次启动生成波形/加载采样包
   约 0.3~0.9 s；不想要声音可以把 `audio.enabled` 设为 `false`，或进游戏按 `M` 静音。
 - 撞墙会沿墙滑动而不是瞬间停车（V3.0 赛道边界；圆形场地只在外圈撞墙）；旧矩形场地 fallback 仍是撞边清零。
@@ -487,6 +522,9 @@ telemetry = sim.step_raw(0.9, 0.0, 0.4)                   # 或直接给踏板/�
 
 ## 版本
 
+- **V3.17.2**（2026-11-25）：音高表改为 64 档，修复切换音高时的断续。
+- **V3.17.1**（2026-11-25）：开局声音延迟 0.6 s 再淡入 0.4 s。
+- **V3.17.0**（2026-11-25）：换用 CC0 引擎采样包，新增换挡采样与合成撞墙声。
 - **V3.16.0**（2026-11-25）：3D HUD 圈速信息下方增加 5 要素弯道窗口。
 - **V3.15.0**（2026-11-25）：3D 缩略图翻转并放大 1.5×；3D 接入发动机/打滑声音与 M 静音。
 - **V3.14.0**（2026-11-25）：3D 细节完善（柱子×2、圆形虚线/起点格、缩略图、等宽字体、车/相机修正）。
