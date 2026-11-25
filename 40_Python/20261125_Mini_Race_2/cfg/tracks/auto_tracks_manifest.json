@@ -1,0 +1,68 @@
+{
+ "generator": "scripts/build_random_track.py",
+ "generator_version": "1.0.0",
+ "seed_compatibility": "only same generator_version",
+ "params": {
+  "lap_length_m": [
+   1200.0,
+   1800.0
+  ],
+  "width_m": [
+   15.0,
+   25.0
+  ],
+  "corner_count": [
+   8,
+   12
+  ],
+  "min_straight_m": 12.0,
+  "min_longest_straight_m": 0.0,
+  "max_straight_m": 300.0,
+  "straight_kappa_threshold": 0.0025,
+  "hairpin_boundary_curvature": 0.12,
+  "min_hairpin_count": 1,
+  "max_left_right_diff": null,
+  "boundary_max_curvature": 0.3,
+  "corner_samples": 120,
+  "radial_radius_range": [
+   0.25,
+   1.0
+  ],
+  "angle_jitter": 0.45,
+  "postprocess_straight_kappa": 0.0015,
+  "postprocess_blend_points": 3,
+  "max_attempts": 400
+ },
+ "tracks": [
+  {
+   "file": "track_auto_01.json",
+   "seed": 20261127,
+   "name": "自动赛道 01",
+   "lap_length_m": 1606.8,
+   "width_m": 16.573,
+   "corner_count": 8,
+   "max_straight_m": 207.86,
+   "hairpin_boundary_curvature": 0.2566
+  },
+  {
+   "file": "track_auto_02.json",
+   "seed": 20261129,
+   "name": "自动赛道 02",
+   "lap_length_m": 1231.3,
+   "width_m": 19.102,
+   "corner_count": 8,
+   "max_straight_m": 167.92,
+   "hairpin_boundary_curvature": 0.2414
+  },
+  {
+   "file": "track_auto_03.json",
+   "seed": 20261133,
+   "name": "自动赛道 03",
+   "lap_length_m": 1796.0,
+   "width_m": 15.382,
+   "corner_count": 8,
+   "max_straight_m": 232.02,
+   "hairpin_boundary_curvature": 0.2488
+  }
+ ]
+}

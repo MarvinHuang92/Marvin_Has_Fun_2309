@@ -1,0 +1,25 @@
+{
+ "disabled": [
+  "circle",
+  "oval",
+  "shanghai"
+ ],
+ "sort_key": "number",
+ "sort_reverse": false,
+ "generator": {
+  "seed": "92721314",
+  "count": "1",
+  "lap_min": "1200",
+  "lap_max": "1800",
+  "width_min": "15",
+  "width_max": "22",
+  "corner_min": "8",
+  "corner_max": "12",
+  "min_straight": "12",
+  "min_longest": "240",
+  "max_straight": "400",
+  "hairpin_min": "2",
+  "hairpin_curv": "0.12",
+  "diff_limit": "3"
+ }
+}

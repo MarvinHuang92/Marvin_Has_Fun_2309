@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""赛道 / 旋转相机自检（不需要 pygame，纯数学 + cfg/track.json）。
+"""赛道 / 旋转相机自检（不需要 pygame，纯数学 + cfg/tracks/track.json）。
 
 跑法::
 
     python scripts/tests_track.py
 
 验证：
-- cfg/track.json 的尺寸/比例尺/起点/圈长；
+- cfg/tracks/track.json 的尺寸/比例尺/起点/圈长；
 - 车固定在屏幕正中、画面按实际速度方向朝上（前进/倒车都成立）；
 - 低速冻结、角度连续不翻转；
 - 撞墙沿墙滑动（去掉法向速度、保留切向速度），不瞬间停车。
@@ -42,13 +42,13 @@ def check(name, ok, detail=""):
 
 
 def _load_track():
-    with open(os.path.join(PROJECT, "cfg", "track.json"), "r", encoding="utf-8") as handle:
+    with open(os.path.join(PROJECT, "cfg", "tracks", "track.json"), "r", encoding="utf-8") as handle:
         return json.load(handle)
 
 
 def _track_sim():
     config = copy.deepcopy(DEFAULT_CONFIG)
-    config["track"] = {"enabled": True, "file": "cfg/track.json",
+    config["track"] = {"enabled": True, "file": "cfg/tracks/track.json",
                        "wall_slide_drag": 0.3, "wall_margin": 0.02,
                        "camera": {"pixels_per_meter": 6.0}}
     return Simulation(config, project_dir=PROJECT)
@@ -113,14 +113,16 @@ def test_maps_config():
     maps = config.get("maps", {})
     ids = [item.get("id") for item in maps.get("list", [])]
     numbers = [item.get("number") for item in maps.get("list", [])]
-    check("地图顺序：圆形(0) / 椭圆(1) / 上海(2)",
-          ids == ["circle", "oval", "shanghai"] and numbers == [0, 1, 2],
+    check("地图顺序：圆形(0) / 椭圆(1) / 上海(2) / 宝山(3) / 自动(4-6)",
+          ids == ["circle", "oval", "shanghai", "baoshan",
+                  "auto_1", "auto_2", "auto_3"]
+          and numbers == [0, 1, 2, 3, 4, 5, 6],
           "ids=%s numbers=%s" % (ids, numbers))
     for item in maps.get("list", []):
         path = os.path.join(PROJECT, item.get("file", ""))
         check("地图文件存在：%s" % item.get("id"), os.path.isfile(path),
               item.get("file", ""))
-    with open(os.path.join(PROJECT, "cfg", "track_oval.json"), "r",
+    with open(os.path.join(PROJECT, "cfg", "tracks", "track_oval.json"), "r",
               encoding="utf-8") as handle:
         oval = json.load(handle)
     check("椭圆赛道全长约 4434.7 m",
@@ -131,7 +133,7 @@ def test_maps_config():
           and abs(oval["reference"]["outer_diameter_m"] - 800.0) < 1e-6
           and abs(oval["width_m"] - 25.0) < 1e-6,
           "lap=%.1f" % oval["reference"]["lap_length_m"])
-    with open(os.path.join(PROJECT, "cfg", "track.json"), "r",
+    with open(os.path.join(PROJECT, "cfg", "tracks", "track.json"), "r",
               encoding="utf-8") as handle:
         shanghai = json.load(handle)
     check("上海全长约 5451 m",
@@ -142,7 +144,7 @@ def test_maps_config():
           and abs(oval["reference"].get("start_fraction_before_t1", 0.0)
                   - 1.0 / 3.0) < 1e-6,
           "corners=%d" % len(oval["corners"]))
-    with open(os.path.join(PROJECT, "cfg", "track_circle.json"), "r",
+    with open(os.path.join(PROJECT, "cfg", "tracks", "track_circle.json"), "r",
               encoding="utf-8") as handle:
         circle = json.load(handle)
     check("圆形试车场：Ø400 m 空地 / Ø360 m 虚线",
@@ -162,7 +164,7 @@ def test_maps_config():
 
 def test_corner_elements():
     config = copy.deepcopy(DEFAULT_CONFIG)
-    config["track"] = {"enabled": True, "file": "cfg/track.json"}
+    config["track"] = {"enabled": True, "file": "cfg/tracks/track.json"}
     track = Track(PROJECT, config)
     elements = track.elements
     check("上海弯/直道元素交替且完整覆盖",
@@ -202,7 +204,7 @@ def test_corner_elements():
           repr(window[0] if window else None))
 
     oval_config = copy.deepcopy(DEFAULT_CONFIG)
-    oval_config["track"] = {"enabled": True, "file": "cfg/track_oval.json"}
+    oval_config["track"] = {"enabled": True, "file": "cfg/tracks/track_oval.json"}
     oval = Track(PROJECT, oval_config)
     check("椭圆赛道只有 T1/T2 两个弯", len(oval.elements) == 4,
           "%d 个元素" % len(oval.elements))
@@ -216,7 +218,7 @@ def test_corner_elements():
 
 def test_circle_wall():
     config = copy.deepcopy(DEFAULT_CONFIG)
-    config["track"] = {"enabled": True, "file": "cfg/track_circle.json",
+    config["track"] = {"enabled": True, "file": "cfg/tracks/track_circle.json",
                        "wall_slide_drag": 0.3, "wall_margin": 0.02}
     sim = Simulation(config, project_dir=PROJECT)
     track = sim.track
@@ -249,7 +251,7 @@ def test_circle_wall():
 
 def test_lap_timer():
     config = copy.deepcopy(DEFAULT_CONFIG)
-    config["track"] = {"enabled": True, "file": "cfg/track.json"}
+    config["track"] = {"enabled": True, "file": "cfg/tracks/track.json"}
     track = Track(PROJECT, config)
     timer = LapTimer(track)
     points = track.points
@@ -279,7 +281,7 @@ def test_lap_timer():
           "%s / %s" % (format_time(83.456), format_time(None)))
 
     circle_config = copy.deepcopy(DEFAULT_CONFIG)
-    circle_config["track"] = {"enabled": True, "file": "cfg/track_circle.json"}
+    circle_config["track"] = {"enabled": True, "file": "cfg/tracks/track_circle.json"}
     circle_timer = LapTimer(Track(PROJECT, circle_config))
     check("圆形试车场不计圈", not circle_timer.enabled, "enabled=False")
 
@@ -292,7 +294,7 @@ def _place_point(track, timer, along, perp, time_s):
 
 def test_lap_timer_home_and_cooldown():
     config = copy.deepcopy(DEFAULT_CONFIG)
-    config["track"] = {"enabled": True, "file": "cfg/track.json"}
+    config["track"] = {"enabled": True, "file": "cfg/tracks/track.json"}
     timer = LapTimer(Track(PROJECT, config))
     _place_point(None, timer, 30.0, 0.0, 0.0)      # 武装
     _place_point(None, timer, -1.0, 0.0, 9.9)

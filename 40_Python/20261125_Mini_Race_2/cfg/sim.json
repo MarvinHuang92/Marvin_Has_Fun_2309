@@ -1,229 +1,268 @@
 {
-  "version": 4,
-  "window": {
-    "width": 1440,
-    "height": 900,
-    "caption": "Mini Race 2 - Vehicle Simulator",
-    "fps": 60
+ "version": 4,
+ "window": {
+  "width": 1440,
+  "height": 900,
+  "caption": "Mini Race 2 - Vehicle Simulator",
+  "fps": 60
+ },
+ "world": {
+  "width_m": 129.6,
+  "height_m": 81.0
+ },
+ "track": {
+  "enabled": true,
+  "file": "cfg/tracks/track.json",
+  "wall_slide_drag": 0.3,
+  "wall_margin": 0.02,
+  "camera": {
+   "pixels_per_meter": 6.0,
+   "angle_rate": 5.0,
+   "max_angle_rate": 6.0,
+   "freeze_speed": 1.5,
+   "center_tolerance": 0.1
+  }
+ },
+ "maps": {
+  "default": "shanghai",
+  "session_file": "data/last_map.json",
+  "list": [
+   {
+    "id": "circle",
+    "number": 0,
+    "name": "圆形试车场",
+    "display_name": "CIRCLE TEST TRACK",
+    "file": "cfg/tracks/track_circle.json",
+    "pixels_per_meter": 6.0
+   },
+   {
+    "id": "oval",
+    "number": 1,
+    "name": "椭圆赛道",
+    "display_name": "OVAL TEST TRACK",
+    "file": "cfg/tracks/track_oval.json",
+    "pixels_per_meter": 6.0
+   },
+   {
+    "id": "shanghai",
+    "number": 2,
+    "name": "上海国际赛车场",
+    "display_name": "SHANGHAI CIRCUIT",
+    "file": "cfg/tracks/track.json",
+    "pixels_per_meter": 6.0
+   },
+   {
+    "id": "baoshan",
+    "number": 3,
+    "name": "宝山卡丁车场",
+    "display_name": "BAOSHAN KARTING",
+    "file": "cfg/tracks/track_baoshan.json",
+    "pixels_per_meter": 6.0
+   },
+   {
+    "id": "auto_1",
+    "number": 4,
+    "name": "自动赛道 01",
+    "display_name": "AUTO TRACK 01",
+    "file": "cfg/tracks/track_auto_01.json",
+    "pixels_per_meter": 6.0,
+    "seed_file": "cfg/seeds/seed_v1.0.0_20261126_022635_20261127.json",
+    "generator_version": "1.0.0"
+   },
+   {
+    "id": "auto_2",
+    "number": 5,
+    "name": "自动赛道 02",
+    "display_name": "AUTO TRACK 02",
+    "file": "cfg/tracks/track_auto_02.json",
+    "pixels_per_meter": 6.0,
+    "seed_file": "cfg/seeds/seed_v1.0.0_20261126_022635_20261129.json",
+    "generator_version": "1.0.0"
+   },
+   {
+    "id": "auto_3",
+    "number": 6,
+    "name": "自动赛道 03",
+    "display_name": "AUTO TRACK 03",
+    "file": "cfg/tracks/track_auto_03.json",
+    "pixels_per_meter": 6.0,
+    "seed_file": "cfg/seeds/seed_v1.0.0_20261126_022635_20261133.json",
+    "generator_version": "1.0.0"
+   }
+  ],
+  "startup": null
+ },
+ "scale": {
+  "gravity": 9.81
+ },
+ "vehicle": {
+  "step_hz": 240,
+  "max_substeps": 16,
+  "mass": 1450.0,
+  "inertia": 2900.0,
+  "wheelbase": 2.7,
+  "front_weight_fraction": 0.52,
+  "cg_height": 0.4,
+  "wheel_radius": 0.32,
+  "max_steer_deg": 33.5,
+  "half_width": 0.95,
+  "half_length": 2.25,
+  "shift_max_speed": 1.5,
+  "stop_speed": 0.05
+ },
+ "tires": {
+  "friction": 1.1,
+  "cornering_stiffness": 16.0,
+  "tire_shape": 1.6,
+  "front_stiffness_scale": 1.0,
+  "rear_stiffness_scale": 1.0,
+  "load_sensitivity": 0.1,
+  "front_friction_scale": 1.0,
+  "rear_friction_scale": 1.0,
+  "low_speed_fade": 1.2,
+  "scrub_speed": 1.2,
+  "scrub_yaw_damping": 8.0,
+  "scrub_lateral_damping": 10.0
+ },
+ "drivetrain": {
+  "drive_split_front": 0.5,
+  "final_drive": 5.5,
+  "gear_ratios": [
+   3.1,
+   2.35,
+   1.85,
+   1.55,
+   1.32,
+   0.85
+  ],
+  "reverse_ratio": 3.2,
+  "efficiency": 0.9,
+  "idle_rpm": 900.0,
+  "redline_rpm": 7000.0,
+  "launch_rpm": 3000.0,
+  "shift_up_rpm": 6700.0,
+  "shift_down_rpm": 2500.0,
+  "kickdown_rpm": 3300.0,
+  "shift_time": 0.18,
+  "shift_interval": 0.3
+ },
+ "engine": {
+  "torque_curve": [
+   [
+    1000.0,
+    234.6
+   ],
+   [
+    2000.0,
+    306.0
+   ],
+   [
+    3000.0,
+    336.6
+   ],
+   [
+    4500.0,
+    357.0
+   ],
+   [
+    5500.0,
+    336.6
+   ],
+   [
+    6500.0,
+    285.6
+   ],
+   [
+    7200.0,
+    224.4
+   ]
+  ],
+  "friction_base": 16.0,
+  "friction_per_rpm": 0.005
+ },
+ "aero": {
+  "drag_coefficient": 0.42,
+  "rolling_resistance": 0.015
+ },
+ "brakes": {
+  "decel_limit": 13.5,
+  "front_bias": 0.62
+ },
+ "controls": {
+  "sensitivity_throttle": 1.8,
+  "sensitivity_brake": 1.8,
+  "sensitivity_steer": 2.0,
+  "spring_back": 2.1,
+  "throttle_limit": 0.9,
+  "brake_limit": 0.8,
+  "steer_dead_zone": 0.1
+ },
+ "audio": {
+  "enabled": true,
+  "master_volume": 0.35,
+  "engine_volume": 0.9,
+  "slip_volume": 0.7,
+  "sample_pack": {
+   "enabled": true,
+   "engine_file": "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-1.wav",
+   "loop_start_s": 0.0,
+   "loop_seconds": 4.0,
+   "base_rpm": 2400.0,
+   "min_pitch_factor": 0.45,
+   "max_pitch_factor": 2.6,
+   "target_peak": 0.55,
+   "run_engine_files": [
+    "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-8.wav",
+    "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-9.wav",
+    "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-10.wav",
+    "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-11.wav",
+    "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-12.wav",
+    "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-13.wav"
+   ],
+   "shift_file": "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-gear-shift-1.wav",
+   "run_engine_frequencies": [
+    73.5,
+    82.5,
+    92.5,
+    104.0,
+    116.5,
+    131.0
+   ],
+   "run_loop_seconds": 1.5,
+   "pitch_steps": 64,
+   "idle_pitch_factor": 0.95,
+   "crash_volume": 0.85
   },
-  "world": {
-    "width_m": 129.6,
-    "height_m": 81.0
-  },
-  "track": {
-    "enabled": true,
-    "file": "cfg/track.json",
-    "wall_slide_drag": 0.3,
-    "wall_margin": 0.02,
-    "camera": {
-      "pixels_per_meter": 6.0,
-      "angle_rate": 5.0,
-      "max_angle_rate": 6.0,
-      "freeze_speed": 1.5,
-      "center_tolerance": 0.1
-    }
-  },
-  "maps": {
-    "default": "shanghai",
-    "session_file": "data/last_map.json",
-    "list": [
-      {
-        "id": "circle",
-        "number": 0,
-        "name": "圆形试车场",
-        "display_name": "CIRCLE TEST TRACK",
-        "file": "cfg/track_circle.json",
-        "pixels_per_meter": 6.0
-      },
-      {
-        "id": "oval",
-        "number": 1,
-        "name": "椭圆赛道",
-        "display_name": "OVAL TEST TRACK",
-        "file": "cfg/track_oval.json",
-        "pixels_per_meter": 6.0
-      },
-      {
-        "id": "shanghai",
-        "number": 2,
-        "name": "上海国际赛车场",
-        "display_name": "SHANGHAI CIRCUIT",
-        "file": "cfg/track.json",
-        "pixels_per_meter": 6.0
-      }
-    ]
-  },
-  "scale": {
-    "gravity": 9.81
-  },
-  "vehicle": {
-    "step_hz": 240,
-    "max_substeps": 16,
-    "mass": 1450.0,
-    "inertia": 2900.0,
-    "wheelbase": 2.7,
-    "front_weight_fraction": 0.52,
-    "cg_height": 0.4,
-    "wheel_radius": 0.32,
-    "max_steer_deg": 33.5,
-    "half_width": 0.95,
-    "half_length": 2.25,
-    "shift_max_speed": 1.5,
-    "stop_speed": 0.05
-  },
-  "tires": {
-    "friction": 1.1,
-    "cornering_stiffness": 16.0,
-    "tire_shape": 1.6,
-    "front_stiffness_scale": 1.0,
-    "rear_stiffness_scale": 1.0,
-    "load_sensitivity": 0.1,
-    "front_friction_scale": 1.0,
-    "rear_friction_scale": 1.0,
-    "low_speed_fade": 1.2,
-    "scrub_speed": 1.2,
-    "scrub_yaw_damping": 8.0,
-    "scrub_lateral_damping": 10.0
-  },
-  "drivetrain": {
-    "drive_split_front": 0.5,
-    "final_drive": 5.5,
-    "gear_ratios": [
-      3.1,
-      2.35,
-      1.85,
-      1.55,
-      1.32,
-      0.85
-    ],
-    "reverse_ratio": 3.2,
-    "efficiency": 0.9,
-    "idle_rpm": 900.0,
-    "redline_rpm": 7000.0,
-    "launch_rpm": 3000.0,
-    "shift_up_rpm": 6700.0,
-    "shift_down_rpm": 2500.0,
-    "kickdown_rpm": 3300.0,
-    "shift_time": 0.18,
-    "shift_interval": 0.3
-  },
-  "engine": {
-    "torque_curve": [
-      [
-        1000.0,
-        234.6
-      ],
-      [
-        2000.0,
-        306.0
-      ],
-      [
-        3000.0,
-        336.6
-      ],
-      [
-        4500.0,
-        357.0
-      ],
-      [
-        5500.0,
-        336.6
-      ],
-      [
-        6500.0,
-        285.6
-      ],
-      [
-        7200.0,
-        224.4
-      ]
-    ],
-    "friction_base": 16.0,
-    "friction_per_rpm": 0.005
-  },
-  "aero": {
-    "drag_coefficient": 0.42,
-    "rolling_resistance": 0.015
-  },
-  "brakes": {
-    "decel_limit": 13.5,
-    "front_bias": 0.62
-  },
-  "controls": {
-    "sensitivity_throttle": 1.8,
-    "sensitivity_brake": 1.8,
-    "sensitivity_steer": 2.0,
-    "spring_back": 2.1,
-    "throttle_limit": 0.9,
-    "brake_limit": 0.8,
-    "steer_dead_zone": 0.1
-  },
-  "audio": {
-    "enabled": true,
-    "master_volume": 0.35,
-    "engine_volume": 0.9,
-    "slip_volume": 0.7,
-    "sample_pack": {
-      "enabled": true,
-      "engine_file": "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-1.wav",
-      "loop_start_s": 0.0,
-      "loop_seconds": 4.0,
-      "base_rpm": 2400.0,
-      "min_pitch_factor": 0.45,
-      "max_pitch_factor": 2.6,
-      "target_peak": 0.55,
-      "run_engine_files": [
-        "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-8.wav",
-        "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-9.wav",
-        "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-10.wav",
-        "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-11.wav",
-        "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-12.wav",
-        "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-car-engine-loop-13.wav"
-      ],
-      "shift_file": "sounds/Car_Engine_Gear_Shift_Hum_Loops/soundza-gear-shift-1.wav",
-      "run_engine_frequencies": [
-        73.5,
-        82.5,
-        92.5,
-        104.0,
-        116.5,
-        131.0
-      ],
-      "run_loop_seconds": 1.5,
-      "pitch_steps": 64,
-      "idle_pitch_factor": 0.95,
-      "crash_volume": 0.85
-    },
-    "startup_delay_s": 0.6,
-    "fade_in_s": 0.4
-  },
-  "diagnostics": {
-    "jump_accel_threshold": 50.0,
-    "heading_rate_threshold": 20.0,
-    "gear_hunting_window": 2.0,
-    "gear_hunting_changes": 4,
-    "slip_threshold": 0.5,
-    "grip_saturation_time": 1.0,
-    "yaw_runaway_threshold": 2.0,
-    "yaw_runaway_steer": 0.15,
-    "yaw_runaway_time": 0.5,
-    "max_recent_events": 20
-  },
-  "render": {
-    "background": "images/track.jpg",
-    "car_sprite": "images/red-car-small.png",
-    "pixels_per_meter": 11.111111,
-    "follow_car": true,
-    "trail_points": 300,
-    "show_hud": true,
-    "show_help": true,
-    "show_trail": true,
-    "minimap": {
-      "enabled": true,
-      "width": 240,
-      "height": 170,
-      "margin": 14
-    }
-  },
-  "vehicle_preset": "grocery"
+  "startup_delay_s": 0.6,
+  "fade_in_s": 0.4
+ },
+ "diagnostics": {
+  "jump_accel_threshold": 50.0,
+  "heading_rate_threshold": 20.0,
+  "gear_hunting_window": 2.0,
+  "gear_hunting_changes": 4,
+  "slip_threshold": 0.5,
+  "grip_saturation_time": 1.0,
+  "yaw_runaway_threshold": 2.0,
+  "yaw_runaway_steer": 0.15,
+  "yaw_runaway_time": 0.5,
+  "max_recent_events": 20
+ },
+ "render": {
+  "background": "images/track.jpg",
+  "car_sprite": "images/red-car-small.png",
+  "pixels_per_meter": 11.111111,
+  "follow_car": true,
+  "trail_points": 300,
+  "show_hud": true,
+  "show_help": true,
+  "show_trail": true,
+  "minimap": {
+   "enabled": true,
+   "width": 240,
+   "height": 170,
+   "margin": 14
+  }
+ },
+ "vehicle_preset": "grocery"
 }

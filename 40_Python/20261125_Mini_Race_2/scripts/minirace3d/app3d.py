@@ -32,6 +32,7 @@ from minirace.laptiming import LapTimer, format_time  # noqa: E402
 from minirace.ranking import build_standings, format_gap, ordinal  # noqa: E402
 from minirace.sim import Simulation  # noqa: E402
 from minirace.warnings import WrongWayMonitor  # noqa: E402
+import track_manager as tm  # noqa: E402
 from minirace3d.minimap import MiniMap  # noqa: E402
 from minirace3d.scene import SceneBuilder  # noqa: E402
 
@@ -57,10 +58,16 @@ class App3D(ShowBase):
         self.audio = Audio(self.base_config.get("audio", {}),
                            project_dir=self.project_dir)
         self.maps = list((self.base_config.get("maps", {}) or {}).get("list", []))
+        self.all_maps = list(self.maps)
+        self.manager = tm.load_manager(PROJECT_DIR)
+        self.maps = tm.available_maps(self.all_maps, self.manager)
         if not self.maps:
-            raise RuntimeError("cfg/sim.json 中没有 maps.list")
-        self.map_index = self._initial_map_index(map_id)
+            self.no_track = True
+            self._show_no_track()
+            return
+        self.no_track = False
         self.best_laps = {}
+        self.map_index = self._initial_map_index(map_id)
         self.paused = False
         self._accumulator = 0.0
         self._clock = self.taskMgr  # 只用于命名避免误用
@@ -94,20 +101,30 @@ class App3D(ShowBase):
 
     # ------------------------------------------------------------------ 初始化
     def _initial_map_index(self, map_id):
-        if map_id:
-            for index, item in enumerate(self.maps):
-                if item.get("id") == map_id:
-                    return index
-        session = os.path.join(PROJECT_DIR, "data", "last_map.json")
-        try:
-            with open(session, "r", encoding="utf-8") as handle:
-                saved = json.load(handle).get("id")
-            for index, item in enumerate(self.maps):
-                if item.get("id") == saved:
-                    return index
-        except (IOError, OSError, ValueError):
-            pass
-        return 0
+        available_ids = [str(item.get("id", "")) for item in self.maps]
+        if map_id and map_id in available_ids:
+            return available_ids.index(map_id)
+        saved_id, best_laps = tm.read_session(PROJECT_DIR, self.base_config)
+        self.best_laps = tm.migrate_best_laps(
+            best_laps, self.all_maps, PROJECT_DIR)
+        startup_id = tm.take_startup_id(PROJECT_DIR)
+        default_id = (self.base_config.get("maps", {}) or {}).get(
+            "default", "")
+        index = tm.select_map_index(self.all_maps, self.maps, startup_id,
+                                    saved_id, default_id)
+        return 0 if index is None else index
+
+    def _show_no_track(self):
+        from direct.gui.OnscreenText import OnscreenText
+        OnscreenText(text="[No Available Track]", pos=(0, 0.02), scale=0.12,
+                     fg=(1.0, 0.72, 0.25, 1), bg=(0, 0, 0, 0.45),
+                     align=TextNode.ACenter, parent=self.render2d)
+        self.taskMgr.doMethodLater(3.0, self._quit_no_track,
+                                   "no-track-exit")
+
+    def _quit_no_track(self, task):
+        self.userExit()
+        return task.done
 
     def _load_hud_font(self):
         # 和 2D 一样用等宽字体，避免数字变化时宽度跳动
@@ -226,7 +243,7 @@ class App3D(ShowBase):
         config = json.loads(json.dumps(self.base_config))
         track = config.setdefault("track", {})
         track["enabled"] = True
-        track["file"] = map_def.get("file", "cfg/track.json")
+        track["file"] = map_def.get("file", "cfg/tracks/track.json")
         camera = track.setdefault("camera", {})
         camera["pixels_per_meter"] = 6.0
         config["active_map"] = {
@@ -253,8 +270,9 @@ class App3D(ShowBase):
         self.wrong_way.reset()
         self.lap_timer = LapTimer(self.sim.track)
         self.best_laps = getattr(self, "best_laps", {})
-        if self.current_map.get("id") in self.best_laps:
-            self.lap_timer.best = self.best_laps[self.current_map.get("id")]
+        best_key = tm.track_uid(self.current_map, PROJECT_DIR)
+        if best_key in self.best_laps:
+            self.lap_timer.best = self.best_laps[best_key]
         self.scene_root = self.render.attachNewNode("scene")
         self.track_scene = SceneBuilder(self.sim.track, self.scene_root)
         self.track_scene.build()

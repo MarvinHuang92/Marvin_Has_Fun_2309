@@ -33,11 +33,11 @@ DEFAULT_CONFIG = {
         "width_m": 129.6,
         "height_m": 81.0,
     },
-    # 赛道模式（V3.0）：由 scripts/build_track.py 从 images/track.jpg 生成的 cfg/track.json
+    # 赛道模式（V3.0）：由 scripts/build_track.py 从 images/track.jpg 生成的 cfg/tracks/track.json
     # 提供中心线/宽度/起点；关掉时退回旧版矩形世界。
     "track": {
         "enabled": False,
-        "file": "cfg/track.json",
+        "file": "cfg/tracks/track.json",
         "wall_slide_drag": 0.3,
         "wall_margin": 0.02,
         "camera": {
@@ -58,7 +58,7 @@ DEFAULT_CONFIG = {
                 "number": 0,
                 "name": "圆形试车场",
                 "display_name": "CIRCLE TEST TRACK",
-                "file": "cfg/track_circle.json",
+                "file": "cfg/tracks/track_circle.json",
                 "pixels_per_meter": 6.0,
             },
             {
@@ -66,7 +66,7 @@ DEFAULT_CONFIG = {
                 "number": 1,
                 "name": "椭圆赛道",
                 "display_name": "OVAL TEST TRACK",
-                "file": "cfg/track_oval.json",
+                "file": "cfg/tracks/track_oval.json",
                 "pixels_per_meter": 6.0,
             },
             {
@@ -74,7 +74,7 @@ DEFAULT_CONFIG = {
                 "number": 2,
                 "name": "上海国际赛车场",
                 "display_name": "SHANGHAI CIRCUIT",
-                "file": "cfg/track.json",
+                "file": "cfg/tracks/track.json",
                 "pixels_per_meter": 6.0,
             },
         ],

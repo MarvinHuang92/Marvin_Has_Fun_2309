@@ -2,7 +2,7 @@
 """从示意图生成赛道的**中心线/边界/起点**数据（构建期工具，运行期不需要）。
 
 输入：``images/track.jpg``（上海国际赛车场示意图，黑线=赛道，灰底，带 T1..T16 标签）
-输出：``cfg/track.json``（world 坐标，米）+ ``docs/images/track_layout.png`` 预览图
+输出：``cfg/tracks/track.json``（world 坐标，米）+ ``docs/images/track_layout.png`` 预览图
 
 做法：
 1. 取黑色像素中最大的连通域（赛道），丢掉 T1..T16 文字；
@@ -31,7 +31,7 @@ from scipy.spatial import cKDTree
 
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_IMAGE = os.path.join(PROJECT, "images", "track.jpg")
-DEFAULT_OUT = os.path.join(PROJECT, "cfg", "track.json")
+DEFAULT_OUT = os.path.join(PROJECT, "cfg", "tracks", "track.json")
 DEFAULT_PREVIEW = os.path.join(PROJECT, "docs", "images", "track_layout.png")
 
 STRAIGHT_LENGTH_M = 1135.0
@@ -48,8 +48,8 @@ CORNER_LABEL_PIXELS = {
     13: (1315.0, 705.0), 14: (200.0, 885.0), 15: (245.0, 780.0),
     16: (465.0, 760.0),
 }
-CIRCLE_OUT = os.path.join(PROJECT, "cfg", "track_circle.json")
-OVAL_OUT = os.path.join(PROJECT, "cfg", "track_oval.json")
+CIRCLE_OUT = os.path.join(PROJECT, "cfg", "tracks", "track_circle.json")
+OVAL_OUT = os.path.join(PROJECT, "cfg", "tracks", "track_oval.json")
 
 
 def build_oval_map(out_path, straight_m=1000.0, outer_radius_m=400.0,
@@ -611,7 +611,7 @@ def draw_preview(data, out_path, scale_px_per_m=0.5):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="从 images/track.jpg 生成 cfg/track.json")
+    parser = argparse.ArgumentParser(description="从 images/track.jpg 生成 cfg/tracks/track.json")
     parser.add_argument("--image", default=DEFAULT_IMAGE)
     parser.add_argument("--out", default=DEFAULT_OUT)
     parser.add_argument("--preview", default=DEFAULT_PREVIEW)
@@ -621,9 +621,9 @@ def main():
                         help="整体比例尺的目标圈长（默认 5451 m）")
     parser.add_argument("--width-m", type=float, default=TRACK_WIDTH_M)
     parser.add_argument("--circle", action="store_true",
-                        help="不读底图，只生成圆形试车场 cfg/track_circle.json")
+                        help="不读底图，只生成圆形试车场 cfg/tracks/track_circle.json")
     parser.add_argument("--oval", action="store_true",
-                        help="不读底图，只生成椭圆赛道 cfg/track_oval.json")
+                        help="不读底图，只生成椭圆赛道 cfg/tracks/track_oval.json")
     parser.add_argument("--circle-out", default=CIRCLE_OUT)
     parser.add_argument("--oval-out", default=OVAL_OUT)
     args = parser.parse_args()

@@ -44,7 +44,7 @@ def _config_for_map(base, map_id="shanghai"):
     if item is not None:
         track = config.setdefault("track", {})
         track["enabled"] = True
-        track["file"] = item.get("file", track.get("file", "cfg/track.json"))
+        track["file"] = item.get("file", track.get("file", "cfg/tracks/track.json"))
     return config
 
 
@@ -131,10 +131,25 @@ def test_multi_ai_independent():
           "sim_times=%s" % ", ".join("%.2f" % car.sim.time for car in cars))
 
 
+def test_ai_spawn_heading():
+    base = load_config(PROJECT_DIR)
+    config = _config_for_map(base, "auto_3")
+    params = _merge_ai_config({"count": 1, "spawn_spacing_m": 12.0})
+    manager = AIManager(config, params, PROJECT_DIR)
+    car = manager.cars[0]
+    expected = car.sim.track.start[2]
+    actual = car.sim.vehicle.heading
+    delta = (actual - expected + math.pi) % (2.0 * math.pi) - math.pi
+    check("AI 在 auto_3 起跑时朝向与前进方向一致",
+          abs(delta) < 0.15,
+          "expected=%.3f actual=%.3f" % (expected, actual))
+
+
 def main():
     test_driver_interface()
     test_rule_driver_closed_loop()
     test_multi_ai_independent()
+    test_ai_spawn_heading()
     failed = [name for name, ok, _ in _results if not ok]
     print()
     print("%d/%d 项通过" % (len(_results) - len(failed), len(_results)))

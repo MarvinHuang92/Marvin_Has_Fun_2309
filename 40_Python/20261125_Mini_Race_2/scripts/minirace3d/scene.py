@@ -389,21 +389,23 @@ class TrackScene(object):
         white = MeshBuilder("post_white")
         if self.track.kind == "circle":
             return
-        if self.track.kind == "circuit" and self.track.name.startswith("Shanghai"):
-            for corner in self.track.corners:
-                index = self._corner_apex(corner)
-                direction = int(corner.get("direction", 1))
+        reference = self.track.reference or {}
+        default_count = int(reference.get("corner_post_count", 1) or 1)
+        default_count = max(0, min(24, default_count))
+        for corner in self.track.corners:
+            count = int(corner.get("post_count", default_count) or 0)
+            count = max(0, min(24, count))
+            if count <= 0:
+                continue
+            direction = int(corner.get("direction", 1))
+            if count == 1:
+                indices = [self._corner_apex(corner)]
+            else:
+                indices = self._sample_arc(int(corner["start"]),
+                                           int(corner["end"]), count)
+            for index in indices:
                 x, y = self._post_position(index, direction)
                 self._add_post(red, white, x, y)
-        elif self.track.kind == "circuit":
-            # 椭圆：每个弯的进弯/出弯和中间共 8 根
-            for corner in self.track.corners:
-                indices = self._sample_arc(int(corner["start"]),
-                                           int(corner["end"]), 8)
-                direction = int(corner.get("direction", 1))
-                for index in indices:
-                    x, y = self._post_position(index, direction)
-                    self._add_post(red, white, x, y)
         red.build(self.root, self.materials["red"])
         white.build(self.root, self.materials["white"])
 

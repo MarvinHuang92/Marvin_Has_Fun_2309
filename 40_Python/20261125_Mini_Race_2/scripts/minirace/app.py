@@ -33,6 +33,7 @@ from minirace.render import Renderer
 from minirace.sim import Simulation
 from minirace.storage import TelemetryRecorder
 from minirace.warnings import WrongWayMonitor
+import track_manager as tm
 
 LOG = logging.getLogger(__name__)
 
@@ -60,12 +61,22 @@ class App(object):
 
         self.clock = pygame.time.Clock()
         # 地图列表 + 上次退出的地图（V3.1）；默认加载上次地图的起点
-        self.maps = self._load_map_list()
-        self.map_info = self._load_map_info()
+        self.all_maps = self._load_map_list()
+        self.manager = tm.load_manager(project_dir)
+        self.maps = tm.available_maps(self.all_maps, self.manager)
         maps_cfg = config.get("maps", {}) or {}
         self.session_path = maps_cfg.get(
             "session_file", os.path.join("data", "last_map.json"))
         self.best_laps = {}
+        self.no_track = not self.maps
+        if self.no_track:
+            self.running = True
+            self.start_monotonic = time.monotonic()
+            self.recorder = None
+            self.diagnostics = None
+            self.audio = None
+            return
+        self.map_info = self._load_map_info()
         self.map_index = self._read_last_map_index()
         self.current_map = self.maps[self.map_index]
         self.config = self._config_for_map(self.map_index)
@@ -87,8 +98,9 @@ class App(object):
         self.start_monotonic = time.monotonic()
         self.map_notice_until = 0.0
         self.lap_timer = LapTimer(self.sim.track)
-        if self.current_map.get("id") in self.best_laps:
-            self.lap_timer.best = self.best_laps[self.current_map.get("id")]
+        best_key = tm.track_uid(self.current_map, self.project_dir)
+        if best_key in self.best_laps:
+            self.lap_timer.best = self.best_laps[best_key]
         self.wrong_way = WrongWayMonitor()
 
         self.recorder = TelemetryRecorder(
@@ -163,7 +175,7 @@ class App(object):
                 "id": "default",
                 "name": "默认赛道",
                 "display_name": "TRACK",
-                "file": track_cfg.get("file", "cfg/track.json"),
+                "file": track_cfg.get("file", "cfg/tracks/track.json"),
             }]
         return items
 
@@ -172,7 +184,7 @@ class App(object):
         config = copy.deepcopy(self.base_config)
         track_cfg = config.setdefault("track", {})
         track_cfg["enabled"] = True
-        track_cfg["file"] = map_def.get("file", track_cfg.get("file", "cfg/track.json"))
+        track_cfg["file"] = map_def.get("file", track_cfg.get("file", "cfg/tracks/track.json"))
         camera_cfg = track_cfg.setdefault("camera", {})
         if map_def.get("pixels_per_meter") is not None:
             camera_cfg["pixels_per_meter"] = float(map_def["pixels_per_meter"])
@@ -190,22 +202,14 @@ class App(object):
 
     def _read_last_map_index(self):
         default_id = (self.base_config.get("maps", {}) or {}).get("default", "")
-        try:
-            with open(self._session_path(), "r", encoding="utf-8") as handle:
-                saved = json.load(handle)
-            self.best_laps = {str(key): float(value)
-                              for key, value in (saved.get("best_laps") or {}).items()
-                              if value is not None}
-            saved_id = str(saved.get("id", ""))
-            for index, map_def in enumerate(self.maps):
-                if map_def.get("id") == saved_id:
-                    return index
-        except (IOError, OSError, ValueError, AttributeError, TypeError):
-            self.best_laps = {}
-        for index, map_def in enumerate(self.maps):
-            if map_def.get("id") == default_id:
-                return index
-        return 0
+        saved_id, best_laps = tm.read_session(self.project_dir,
+                                              self.base_config)
+        self.best_laps = tm.migrate_best_laps(
+            best_laps, self.all_maps, self.project_dir)
+        startup_id = tm.take_startup_id(self.project_dir)
+        index = tm.select_map_index(self.all_maps, self.maps, startup_id,
+                                    saved_id, default_id)
+        return 0 if index is None else index
 
     def _write_last_map(self):
         path = self._session_path()
@@ -215,7 +219,8 @@ class App(object):
                 os.makedirs(folder)
             map_id = self.current_map.get("id", "")
             if hasattr(self, "lap_timer") and self.lap_timer.best is not None:
-                self.best_laps[map_id] = self.lap_timer.best
+                self.best_laps[tm.track_uid(
+                    self.current_map, self.project_dir)] = self.lap_timer.best
             with open(path, "w", encoding="utf-8") as handle:
                 json.dump({"id": map_id,
                            "name": self.current_map.get("name", ""),
@@ -226,7 +231,8 @@ class App(object):
 
     def _load_map(self, index, announce=True):
         if hasattr(self, "lap_timer") and self.lap_timer.best is not None:
-            self.best_laps[self.current_map.get("id", "")] = self.lap_timer.best
+            self.best_laps[tm.track_uid(
+                self.current_map, self.project_dir)] = self.lap_timer.best
         self.map_index = index % len(self.maps)
         self.current_map = self.maps[self.map_index]
         self.config = self._config_for_map(self.map_index)
@@ -240,8 +246,9 @@ class App(object):
         self.step_dt = self.sim.step_dt
         self.accumulator = 0.0
         self.lap_timer = LapTimer(self.sim.track)
-        if self.current_map.get("id") in self.best_laps:
-            self.lap_timer.best = self.best_laps[self.current_map.get("id")]
+        best_key = tm.track_uid(self.current_map, self.project_dir)
+        if best_key in self.best_laps:
+            self.lap_timer.best = self.best_laps[best_key]
         self.wrong_way = WrongWayMonitor()
         if self.diagnostics.active:
             summary = self.diagnostics.stop()
@@ -295,6 +302,8 @@ class App(object):
 
     # ------------------------------------------------------------------ 对外
     def run(self, smoke=False):
+        if getattr(self, "no_track", False):
+            return self._run_no_track()
         smoke_seconds = 1.5 if smoke else None
         while self.running:
             frame_seconds = self.clock.tick(self.fps) / 1000.0
@@ -356,7 +365,29 @@ class App(object):
                 self.running = False
         return 0
 
+    def _run_no_track(self):
+        """所有赛道被禁用/删除时的 3 秒提示。"""
+        window = self.base_config.get("window", {}) or {}
+        self.screen.fill((28, 32, 40))
+        font = pygame.font.SysFont("consolas", 42, bold=True)
+        text = font.render("[No Available Track]", True, (255, 190, 80))
+        self.screen.blit(text, text.get_rect(
+            center=(self.width // 2, self.height // 2)))
+        pygame.display.flip()
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            for event in pygame.event.get():
+                if event.type == QUIT:
+                    deadline = 0.0
+                elif event.type == KEYDOWN and event.key == K_ESCAPE:
+                    deadline = 0.0
+            self.clock.tick(30)
+        return 0
+
     def close(self):
+        if getattr(self, "no_track", False):
+            pygame.quit()
+            return
         self._write_last_map()
         if self.recorder is not None:
             self.recorder.close()

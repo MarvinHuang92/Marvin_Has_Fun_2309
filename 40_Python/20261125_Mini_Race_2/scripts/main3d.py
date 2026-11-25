@@ -9,9 +9,37 @@
 import argparse
 import os
 import sys
+import time
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_DIR, "scripts"))
+
+
+def _show_no_track():
+    """没有可用赛道时显示 3 秒提示后退出。"""
+    try:
+        import pygame
+        pygame.display.init()
+        pygame.font.init()
+        screen = pygame.display.set_mode((900, 260))
+        pygame.display.set_caption("Mini Race 2")
+        font = pygame.font.SysFont("consolas", 44, bold=True)
+        text = font.render("[No Available Track]", True, (255, 190, 80))
+        screen.fill((28, 32, 40))
+        screen.blit(text, text.get_rect(center=(450, 130)))
+        pygame.display.flip()
+        clock = pygame.time.Clock()
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    deadline = 0.0
+            clock.tick(30)
+        pygame.quit()
+    except Exception:  # noqa: BLE001
+        print("[No Available Track]")
+        sys.stdout.flush()
+        time.sleep(3.0)
 
 
 def main():
@@ -26,6 +54,15 @@ def main():
     parser.add_argument("--camera", choices=("rear", "front"), default="rear",
                         help="截图用相机视角")
     args = parser.parse_args()
+
+    from minirace.config import load_config
+    import track_manager as tm
+    base_config = load_config(PROJECT_DIR)
+    manager = tm.load_manager(PROJECT_DIR)
+    available = tm.available_maps(tm.map_list(base_config), manager)
+    if not available:
+        _show_no_track()
+        return 0
 
     from minirace3d.app3d import App3D
     app = App3D(map_id=args.map, offscreen=bool(args.screenshot))

@@ -141,7 +141,11 @@ class AICar(object):
                 ahead_m = spacing * (index + 1)
                 point, point_index = _point_ahead(track.points, start_index,
                                                   ahead_m)
-                ahead, _ = _point_ahead(track.points, point_index, 2.0)
+                # point 可能落在“线段起点 index”之后；用下一个中心线点定方向，
+                # 不能再用 point_index 作为点索引，否则起跑线在闭环接缝处会把
+                # 车头算成反方向。
+                next_index = (point_index + 1) % len(track.points)
+                ahead = track.points[next_index]
                 heading = math.atan2(ahead[1] - point[1], ahead[0] - point[0])
                 self.start_offset_m = ahead_m
                 self.sim.vehicle.reset(point[0], point[1], heading)
@@ -227,7 +231,7 @@ def benchmark_ai(base_config, ai_config, project_dir, map_index=None,
         item = maps[index % len(maps)]
         track_cfg = cfg.setdefault("track", {})
         track_cfg["enabled"] = True
-        track_cfg["file"] = item.get("file", track_cfg.get("file", "cfg/track.json"))
+        track_cfg["file"] = item.get("file", track_cfg.get("file", "cfg/tracks/track.json"))
     else:
         index = 0
     manager = AIManager(cfg, ai_config, project_dir, count=None)

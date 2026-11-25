@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""赛道：从 ``cfg/track.json`` 读取中心线/宽度/起点，提供碰撞与最近点查询。
+"""赛道：从 ``cfg/tracks/track.json`` 读取中心线/宽度/起点，提供碰撞与最近点查询。
 
 几何数据由 ``scripts/build_track.py`` 从 ``images/track.jpg`` 生成（构建期工具），
 运行期只需要 JSON，不依赖 numpy/PIL/opencv。
@@ -56,7 +56,7 @@ class Track(object):
         if not self.enabled:
             return
 
-        rel = cfg.get("file", "cfg/track.json")
+        rel = cfg.get("file", "cfg/tracks/track.json")
         path = rel if os.path.isabs(rel) else os.path.join(str(project_dir), rel)
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)

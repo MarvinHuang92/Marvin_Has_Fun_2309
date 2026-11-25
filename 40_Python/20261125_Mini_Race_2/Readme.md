@@ -1,4 +1,4 @@
-# Mini Race 2 · 车辆模拟器 V3.19.0
+# Mini Race 2 · 车辆模拟器 V4.0.0
 
 一个用 **pygame** 写的俯视车辆模拟器，目标是将来做成 **"无限生成赛道 + AI 自主驾驶"** 的
 模拟器原型。V1.0 从旧练习程序 `Car.py` 重构；V2.0 换上了**真正的 2 自由度车辆动力学**
@@ -22,14 +22,18 @@ V3.5 在 `F2` 选图提示里显示该赛道的**全长和最快记录**（没�
 
 ## 赛道与相机（V3.0/V3.1）
 
-- **三张地图**（`F2` 按编号 0→1→2 循环切换，启动时默认加载**上次退出的地图起点**）：
-  - **0 · 圆形试车场**（`cfg/track_circle.json`）：直径 **400 m** 的圆形空地，
+- **七张地图**（`F2` 按编号 0→6 循环切换，启动时默认加载**上次退出的地图起点**）：
+  - **0 · 圆形试车场**（`cfg/tracks/track_circle.json`）：直径 **400 m** 的圆形空地，
     内部一圈直径 **360 m** 白色虚线（只是参考线，**不是墙**），只有最外侧半径 200 m 是墙；
     起点在圆心正上方（朝左，逆时针）。场地内可自由开，撞最外圈才沿墙滑动。
-  - **1 · 椭圆赛道**（`cfg/track_oval.json`）：两段 **1000 m 直道** + 两端直径 **800 m**
+  - **1 · 椭圆赛道**（`cfg/tracks/track_oval.json`）：两段 **1000 m 直道** + 两端直径 **800 m**
     半圆（外边界），宽 **25 m**，圈长 **4434.7 m**；只有 **T1（右半圆）/ T2（左半圆）** 两个弯；
     起点在 T1 前直道从 T1 往回 **1/3** 处。
-  - **2 · 上海国际赛车场**（`cfg/track.json`）：全长 **5451 m**，见下方尺寸。
+  - **2 · 上海国际赛车场**（`cfg/tracks/track.json`）：全长 **5451 m**，见下方尺寸。
+  - **3 · 宝山卡丁车场**（`cfg/tracks/track_baoshan.json`）：由卫星图提取，中心线 **1264 m**，宽 **18 m**。
+  - **4–6 · 自动赛道 01–03**（`cfg/tracks/track_auto_01..03.json`）：由 `scripts/build_random_track.py` 生成，
+    圈长 1231–1796 m，宽 15.4–19.1 m，8 个弯（约束范围 8–12）；种子和全部边界条件记录在各自 JSON 的
+    `reference.generator` 及 [auto_tracks_manifest.json](cfg/tracks/auto_tracks_manifest.json)。
   - 上次地图记录在 `data/last_map.json`（不入库）；损坏/缺失时回退 `maps.default`。
 - **F2 选图提示**：切换地图后，右下角缩略图上方显示该图信息：
   `MAP [编号] 名称`、`LENGTH 全长 m`、`BEST 最快圈`；没有记录时显示 `--:--:--`。
@@ -37,7 +41,7 @@ V3.5 在 `F2` 选图提示里显示该赛道的**全长和最快记录**（没�
 - **F5 就近重置**：放到离当前位置最近的当前赛道中心线点，朝向沿赛道前进方向，速度/横摆清零；
   **圆形试车场特殊设定：F5 直接回到起点**。`HOME` 仍是回到该地图起点。
 - 上海赛道几何来自 `images/track.jpg`：用 `scripts/build_track.py` 做图像处理生成
-  `cfg/track.json`（中心线/左右边界/起点）。关键尺寸按题目给定：
+  `cfg/tracks/track.json`（中心线/左右边界/起点）。关键尺寸按题目给定：
   整体比例尺按**真实圈长 5451 m** 标定、赛道宽 **15 m**、
   起点在 **T16-T1 直道从 T1 端往回约 1/3 处**、方向按弯道编号 **T1→T2→…→T16**。
   本次生成结果：整体比例尺按 **真实圈长 5451 m** 标定（1.14343 m/px），
@@ -67,7 +71,7 @@ V3.5 在 `F2` 选图提示里显示该赛道的**全长和最快记录**（没�
 |---|---|---|
 | `track.enabled` | true | 是否用赛道模式（false 退回旧版矩形场地） |
 | `track.file` | 当前地图文件 | 赛道几何文件（由 maps 列表切换） |
-| `maps.list` | circle / oval / shanghai | 地图定义（编号 0/1/2、名称、文件、缩放） |
+| `maps.list` | circle / oval / shanghai / baoshan / auto_1..3 | 地图定义（编号 0–6、名称、文件、缩放） |
 | `maps.default` / `session_file` | shanghai / `data/last_map.json` | 无上次记录时的默认地图 / 上次地图记录（不入库） |
 | `track.camera.pixels_per_meter` | 6.0 | 赛道相机缩放（px/m），只影响画面 |
 | `track.camera.freeze_speed` / `angle_rate` / `max_angle_rate` | 1.5 / 5 / 6 | 低速冻结阈值 / 角度平滑 / 最大角速度 |
@@ -123,7 +127,7 @@ python scripts\main3d.py --map oval --screenshot data\3d_oval.png
 
 - 路肩：截面 0.4 m × 1.2 m，从赛道边界向外延伸，红白相间，单色段 ≤5 m；
 - 上海弯心柱：曲率极值的内侧路肩上，直径 **0.24 m**、高 **2 m** 的红白红柱（V3.14 起尺寸 ×2）；
-- 椭圆：每弯进弯→出弯内侧均匀 8 根柱子（含两端）；
+- 弯心柱数量：每弯由 `track.reference.corner_post_count` 控制，默认 **1 根**，`0` 表示不显示；可在 `05_AnnotateTrack.bat` 的“每个弯心的柱子数量”里设置；
 - 椭圆/上海起点龙门架：横梁底部离地 4 m；
 - 圆形场地：Ø360 m 白色虚线参考圆 + 起点黑白格（纯视觉）；
 - 右下角缩略图：360×255（2D 的 1.5 倍）、世界北向朝上；
@@ -246,7 +250,7 @@ V3.0 默认在赛道上跑；把 `cfg/sim.json` 的 `track.enabled` 设为 `fals
 | `-` / 小键盘 `-` | 缩小显示倍率（远，最多 -3） |
 | `=` / 小键盘 `+` | 放大显示倍率（近，最多 +3，2×） |
 | `F5` | 复位到最近中心线（圆形试车场：直接回起点），速度清零；**不重置单圈时间** |
-| `F2` | 切换地图（0 圆形 → 1 椭圆 → 2 上海），从该地图起点开始 |
+| `F2` | 切换地图（0 圆形 → 1 椭圆 → 2 上海 → 3 宝山 → 4–6 自动赛道），从该地图起点开始 |
 | `F9` | 诊断模式开/关（逐步写 `data/diag_*.csv`，关闭时生成异常摘要） |
 | `P` | 暂停 / 继续 |
 | `Home` | 车辆复位到当前地图起点；**圈数 +1，丢弃上一圈用时** |
@@ -434,6 +438,105 @@ command = driver.decide(observation)   # DriveCommand(throttle, brake, steer)
 ![3D 多 AI](docs/images/ai_field_3d.png)
 
 
+## 自动生成赛道（V4.0）
+
+生成脚本：[scripts/build_random_track.py](scripts/build_random_track.py)，默认生成 3 条：
+
+```bat
+python scripts\build_random_track.py --seed 20261126 --count 3
+```
+
+边界条件全部是参数（圈长 1200–1800 m、宽度 15–25 m、弯数 8–12、最长直道 300 m、
+发卡弯边界曲率 ≥0.12 1/m、边界曲率上限 0.30 1/m）：
+
+```bat
+python scripts\build_random_track.py ^
+  --lap-min 1200 --lap-max 1800 ^
+  --width-min 15 --width-max 25 ^
+  --corner-min 8 --corner-max 12 ^
+  --min-straight 12 ^
+  --min-longest-straight 0 ^
+  --max-straight 300 ^
+  --hairpin-curvature 0.12 ^
+  --hairpin-min-count 1 ^
+  --max-left-right-diff none ^
+  --boundary-curvature-max 0.30
+```
+
+- `--min-straight 12`：**所有**直道的最小长度；
+- `--min-longest-straight`：只限制**最长直道**不得短于该值，`0`=关闭；
+- `--max-straight`：**所有**直道的上限，`0`=关闭；
+- `--hairpin-min-count` 是参数：默认 **1**；设为 **0** 相当于关闭发卡数量要求；
+  设得更大时会要求更多高曲率弯，数量超过可行范围时会明确报错；
+- `--max-left-right-diff`：`|左弯数-右弯数|` 的上限；
+  `0`=左右弯数量必须严格相等；`none`=不限制（默认）。
+  设成很小的值可能因为赛道路径约束而生成失败。
+
+每条赛道 JSON 的 `reference.generator` 保存种子和全部参数；
+其中 `reference.generator.version` 是**生成器独立版本号**（当前 `1.0.0`），
+只有同一生成器版本的种子才保证可复现；规则变化会提升该版本号。
+以后任何修改赛道生成规则或输出结构的改动，都必须同步提升 `GENERATOR_VERSION`。
+`cfg/tracks/auto_tracks_manifest.json` 是三条赛道的汇总，方便复现。
+中心线用 `sin²(πt)` 曲率弯 + 零曲率直道，弯内曲率有唯一极值，κ 与 dκ/ds 连续。
+
+生成后默认再做一次后处理：
+
+- 用严格阈值 `|κ| < 0.0015` 找直道，把直道点沿弦线拉直；
+- 直道两端各 3 个点做余弦混合，过渡段归入相邻弯道，避免接点折角；
+- 重建 `corners`/`elements`，自动编号 `T1..Tn`；
+- 起点自动放在**整条赛道最长直道的中点**，方向由种子决定（记录 `start_direction`）；
+- 生成完成后整体旋转赛道，使起点出发方向朝**正右方 +x**（`start_heading_rad=0`，`rotation_rad` 可查）；
+- `corner_post_count` 默认 **1**，每个弯心 1 根柱子；
+- 测试项同时检查直道最大偏差 ≤0.05 m。
+
+## 赛道候选管理器（06_ManageTracks.bat）
+
+双击 [06_ManageTracks.bat](06_ManageTracks.bat) 打开 tkinter 管理器：
+
+- 启用/禁用任意赛道（只从 F2 列表暂时移除，不删除固定赛道）；
+- 随机赛道可删除（同时删除 `cfg/tracks/track_*.json`）；
+- 列表显示编号、ID、名称、类型、长度、宽度、弯数、最长直道、状态、
+  生成器版本（非随机赛道显示 `N.A`）、种子文件名；
+- 删除随机赛道只删除赛道 JSON，**保留 `cfg/seeds/` 里的种子文件**；
+- 可按编号/名称/长度/宽度/弯数/最长直道排序；
+- 可设置“下次启动”的起点，写入主配置 `cfg/sim.json` 的 `maps.startup`，
+  不是写入管理器配置，避免两份状态；
+- 输入参数生成随机赛道并直接加入候选列表。
+
+管理器自己的状态（禁用列表、排序方式、生成参数）保存在
+`cfg/track_manager.json`。启动时如果上次保存的赛道被禁用，会按原列表顺序
+自动找下一条可用赛道；如果没有可用赛道，显示 `[No Available Track]` 并在
+3 秒后退出。
+
+生成随机赛道时会同时在 `cfg/seeds/` 写一个种子文件，文件名形如：
+
+```text
+seed_v1.0.0_20261126_143012_20261127.json
+         ^版本    ^时间戳      ^种子号
+```
+
+种子文件保存完整生成参数，且被 `.gitignore` 忽略；06 删除赛道时保留种子文件。
+
+最快单圈的存储键：
+
+- 固定赛道：地图 ID（例如 `fixed:shanghai`）；
+- 随机赛道：**种子文件名**（例如 `seed:seed_v1.0.0_20261126_143012_20261127.json`）。
+  因此删除旧随机赛道、再生成同名/同 ID 的新赛道时，不会覆盖旧的最快圈记录。
+  旧版按地图 ID 保存的记录会自动迁移。
+
+## 自定义赛道标注（05_AnnotateTrack.bat）
+
+双击 [05_AnnotateTrack.bat](05_AnnotateTrack.bat)，默认打开宝山赛道：
+
+1. `Set Start / Direction`：先点起点，再点起点前方行驶方向上的一个点；
+2. 然后按比赛方向依次点击弯心，自动标 `T1 / T2 / ...`；
+3. 在设置栏填“每个弯心的柱子数量”（默认 1，0=不显示）；
+4. `Save` 写回赛道 JSON。
+
+也可以把想标注的图片直接拖到 `.bat` 上，再按提示输入赛道 JSON 路径。
+从图片创建新地图可先跑 `scripts/build_custom_track.py`（参数见脚本头部说明），
+再用本工具标注弯道和起点。
+
 ## 目录约定
 
 沿用 `40_Python/20261121_Tractor_game` 的范式：
@@ -444,9 +547,15 @@ command = driver.decide(observation)   # DriveCommand(throttle, brake, steer)
 | `02_Tune.bat` | 启动 tkinter 调参控制台（需要 tkinter，不需要 pygame） |
 | `03_Run3D.bat` | Panda3D 3D 显示原型（需要 Python 3.8 + panda3d） |
 | `04_TuneAI.bat` | AI 参数/算力调参控制台（tkinter，不需要 pygame） |
+| `05_AnnotateTrack.bat` | 赛道弯道/起点/柱子数量半自动标注（拖入图片或按提示输入路径） |
+| `06_ManageTracks.bat` | 赛道候选管理器：启用/禁用、排序、生成/删除随机赛道、选择下次启动起点 |
 | `Readme.md` | 文档总入口 |
 | `scripts/main.py` | 2D 程序入口；日志写 `logs/run.log` |
 | `scripts/main3d.py` | Panda3D 3D 原型入口 |
+| `scripts/build_random_track.py` | 按边界条件/种子随机生成闭环赛道 |
+| `scripts/track_manager.py` | 赛道启用/禁用/启动选择公共逻辑 |
+| `scripts/track_manager_gui.py` | 06 赛道候选管理器 GUI |
+| `scripts/tests_generated_tracks.py` | 自动赛道边界条件校验 |
 | `scripts/tune_ai.py` | AI 调参控制台（编辑 cfg/ai.json + headless 算力测试） |
 | `scripts/minirace3d/` | 3D 场景/几何/相机/HUD（不影响物理） |
 | `scripts/minirace/driver.py` | AI 驾驶接口 + 规则驾驶员（纯数学） |
@@ -455,19 +564,24 @@ command = driver.decide(observation)   # DriveCommand(throttle, brake, steer)
 | `scripts/benchmark_report.py` | 命令行版性能报告 |
 | `scripts/minirace/` | 模拟器代码（动力学、输入、模拟、渲染、音频、存储、性能用例） |
 | `scripts/tests_physics.py` | 物理自检（不需要 pygame，23 项） |
-| `scripts/tests_track.py` | 赛道/地图/圈速/弯道窗口/相机/逆行/预设/缩放自检（纯数学，61 项） |
+| `scripts/tests_track.py` | 赛道/地图/圈速/弯道窗口/相机/逆行/预设/缩放自检（纯数学，65 项） |
 | `scripts/tests_audio.py` | 音频冒烟测试（需要 pygame，用 dummy 音频设备，16 项） |
-| `scripts/tests_ai.py` | AI 接口/配色/名次/闭环/多 AI 独立性自检（纯数学，9 项） |
+| `scripts/tests_ai.py` | AI 接口/配色/名次/闭环/多 AI 独立性/起跑朝向自检（纯数学，10 项） |
+| `scripts/tests_generated_tracks.py` | 自动赛道边界条件/种子/自交/发卡数量/直道上下限/左右弯差/拉直后直道/编号/柱数/起点中点/朝向校验（64 项） |
+| `scripts/tests_track_manager.py` | 启用/禁用、禁用后找下一条、无可用赛道、startup 一次性、随机赛道增删、种子文件、种子文件名圈速键/迁移（18 项） |
 | `scripts/tests_diagnostics.py` | 诊断模式自检（构造速度跳变/换挡抖动/撞界/NaN/自旋等，9 项） |
 | `scripts/probe_physics.py` | 标定探针：车辆/传动参数、加速、制动、发动机制动、过弯表 |
-| `scripts/build_track.py` | 构建期工具：`cfg/track.json`；`--circle` 圆形；`--oval` 椭圆 |
+| `scripts/build_track.py` | 构建期工具：`cfg/tracks/track.json`；`--circle` 圆形；`--oval` 椭圆 |
 | `docs/` | 文档（含 `赛道与相机.md`、`音频素材与许可.md`） |
 | `cfg/sim.json` | 全部可调参数（含 `track`、`maps`、`diagnostics` 阈值） |
 | `cfg/ai.json` | AI 数量/决策频率/规则驾驶员参数 |
-| `cfg/track.json` | 上海赛道几何：中心线/左右边界/起点 |
-| `cfg/track_circle.json` | 圆形试车场：Ø400 m 空地 / Ø360 m 虚线 / 起点 |
+| `cfg/track_manager.json` | 赛道管理器的禁用列表/排序/生成参数（起点不在这里） |
+| `cfg/tracks/` | **所有赛道几何 JSON**（固定/宝山/随机/自动）及自动赛道 manifest |
+| `cfg/seeds/` | 随机赛道种子 JSON（文件名=生成器版本+时间戳+种子号；**本地生成，不入库**） |
+| `cfg/tracks/track.json` | 上海赛道几何：中心线/左右边界/起点 |
+| `cfg/tracks/track_circle.json` | 圆形试车场：Ø400 m 空地 / Ø360 m 虚线 / 起点 |
 | `cfg/vehicles/` | 车辆预设：1 买菜车 / 2 性能车 / 3 超跑；自定义存档也放这里 |
-| `cfg/track_oval.json` | 椭圆赛道：2×1000 m 直道 + 2 个 Ø800 m 半圆 / 宽 25 m / T1 T2 |
+| `cfg/tracks/track_oval.json` | 椭圆赛道：2×1000 m 直道 + 2 个 Ø800 m 半圆 / 宽 25 m / T1 T2 |
 | `data/` | 遥测 `run_*.csv`、性能报告 `benchmark_*.txt`、诊断 `diag_*.csv/_summary.txt`（**不入库**） |
 | `sounds/` | 本地音频素材（可选采样包，**不入库**；来源/许可见 `docs/音频素材与许可.md`） |
 | `logs/` | 运行日志（**不入库**） |
@@ -523,6 +637,9 @@ telemetry = sim.step_raw(0.9, 0.0, 0.4)                   # 或直接给踏板/�
 # 自检（物理/赛道/诊断不需要 pygame；音频用 dummy 设备）
 "D:\Programming\Python_dir_38\python.exe" scripts\tests_physics.py
 "D:\Programming\Python_dir_38\python.exe" scripts\tests_track.py
+"D:\Programming\Python_dir_38\python.exe" scripts\tests_generated_tracks.py
+"D:\Programming\Python_dir_38\python.exe" scripts\tests_track_manager.py
+"D:\Programming\Python_dir_38\python.exe" scripts\tests_ai.py
 "D:\Programming\Python_dir_38\python.exe" scripts\tests_audio.py
 "D:\Programming\Python_dir_38\python.exe" scripts\tests_diagnostics.py
 
@@ -574,6 +691,7 @@ telemetry = sim.step_raw(0.9, 0.0, 0.4)                   # 或直接给踏板/�
 
 ## 版本
 
+- **V4.0.0**（2026-11-26）：自动生成赛道；3 条随机赛道（4–6）；05 AnnotateTrack；06 赛道候选管理器。
 - **V3.19.0**（2026-11-25）：AI 驾驶接口 + 规则驾驶员 + 多 AI 管理 + 04_TuneAI。
 - **V3.18.0**（2026-11-25）：3D 版增加 WRONG WAY 闪烁提示和提示音。
 - **V3.17.2**（2026-11-25）：音高表改为 64 档，修复切换音高时的断续。

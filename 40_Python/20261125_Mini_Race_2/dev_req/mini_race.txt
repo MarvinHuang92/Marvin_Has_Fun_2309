@@ -331,3 +331,99 @@ tests_ai.py 7项。默认 count=1，decision_hz=60。
 实现：ranking.py（build_standings/select/format_gap）；AICar lap_timer/race_distance/label；
 2D render standings + AI count；3D standings HUD、AI TextNode标签、B绕车中心旋转相机、
 MiniMap AI markers；tests_ai 9项；文档/截图更新。
+
+2026.11.26 第三十八轮（V3.19.0 修订）宝山T5/柱数
+
+42.
+需求：手动标注后 T5 边界线不平顺；每个弯心柱子数量希望 GUI 可设，默认1。
+实现：对 T5 apex=97 附近中心线做半径18/窗口7局部平滑并重算左右边界（保留15个弯索引）；
+05_AnnotateTrack 增加每弯柱子数量 Spinbox（0~24，默认1），保存到
+reference.corner_post_count；3D scene 按该值放置，1=弯心1根，>1进弯到出弯均匀，0=不显示；
+build_custom/baoshan 默认写入1；文档更新。
+
+
+2026.11.26 第三十九轮（V4.0.0 修订）随机赛道后处理/起点
+
+43.
+需求：随机赛道直道拉直、弯道接点曲率平滑；自动标弯道号；弯心默认1柱；
+起点默认最长直道中点，方向任意但种子可复现。
+实现：strict straight |κ|<0.0015 检测；弦线投影+3点余弦混合；重建 corners/elements T1..Tn；
+corner_post_count=1；_start_on_longest_straight 取最长直道中点，rng 决定正向/反向，
+记录 reference.start_direction/start_fraction/start_straight_length_m；重新生成3条地图。
+
+
+2026.11.26 第四十轮（V4.0.0 修订）起点朝向
+
+44.
+需求：随机赛道起点在最长直道中点，出发方向总朝正右方 +x；可先生成再旋转；保留种子复现。
+实现：_start_on_longest_straight 选最长直道中点，rng 选择 forward/reverse，重建T1..Tn；
+随后围绕原点整体旋转 -heading，使 start.heading_rad=0；
+记录 start_heading_rad/rotation_rad/start_direction；重新生成3条并补测试。
+
+
+2026.11.26 第四十一轮（V4.0.0 修订）发卡数量参数/生成器版本
+
+45.
+需求：最少发卡弯数量可参数化（0=关闭，>1 可用但可能生成失败）；
+生成器独立版本号，只有同版本 seed 要求可复现。
+实现：GENERATOR_VERSION=1.0.0；--hairpin-min-count 默认1；
+按每个弯内侧边界曲率统计 actual_hairpin_count，高曲率 kmax 分配给按转角排序的前 N 个弯；
+JSON/manifest 记录 generator.version、min/actual hairpin、hairpin_indices；
+数量超过最大弯数时明确 ValueError；重新生成3条并补测试。
+
+
+2026.11.26 第四十二轮（V4.0.0 修订）直道上下限参数
+
+46.
+需求：保留所有直道最短12m；新增“最长直道不得短于X”（只作用于最长直道，0=关闭）；
+“最长直道不得长于Y”（Y=0关闭）。
+实现：min_longest_straight_m 默认0，max_straight_m 默认300且0关闭；
+生成后校验 start_straight_length_m >= min_longest（若>0）、所有直道 <= max（若>0）；
+CLI --min-longest-straight/--max-straight；JSON/manifest记录；生成器版本仍1.0.0（未冻结不升）。
+
+
+2026.11.26 第四十三轮（V4.0.0 新增 06 赛道管理器）
+
+47.
+需求：06 bat 管理候选赛道；启用/禁用固定赛道；随机赛道可启用/禁用/删除；
+列表显示长度宽度弯数并支持排序；选择下次启动起点（主配置保存）；
+上次地图被禁用时自动下一条；无可用赛道显示[No Available Track]3秒退出。
+实现：06_ManageTracks.bat + scripts/track_manager_gui.py + track_manager.py；
+cfg/track_manager.json 存 disabled/sort/generator，cfg/sim.json.maps.startup 一次性存启动选择；
+2D/3D 启动过滤禁用列表并回退下一条，均支持无可用赛道提示/退出。
+
+
+2026.11.26 第四十四轮（V4.0.0 整理）赛道 JSON 目录
+
+48.
+需求：cfg 下赛道信息 JSON 很多，统一移至 cfg/tracks。
+实现：track.json/track_circle/track_oval/track_baoshan/track_auto_01..03/
+auto_tracks_manifest 全部移到 cfg/tracks；cfg/sim.json maps.file、构建脚本默认输出、
+05 默认路径、06 GUI 生成路径、测试路径和文档引用同步更新；track_manager.json 留在 cfg。
+
+
+2026.11.26 第四十五轮（V4.0.0 修订）种子文件
+
+49.
+需求：cfg/seeds 保存每次生成新赛道的种子文件；06 显示随机赛道种子文件名；
+删除随机赛道不删种子；种子文件不被 git 追踪；文件名包含生成器版本/时间戳/种子号。
+实现：track_manager.create_seed_file 生成 seed_v<版本>_<时间戳>_<种子>.json；
+build_random_track 与 06 GUI 生成时写种子并记录 map_def.seed_file；
+现有 auto_1..3 按文件 mtime 回填种子；06 增加 Seed file 列，删除只删赛道文件；
+.gitignore 增加 cfg/seeds/；测试增加文件名/内容/保留种子检查。
+
+
+2026.11.26 第四十六轮（V4.0.0 修复）auto_3 AI 起跑朝向
+
+50.
+问题：auto_3 起点在最长直道中点/闭环接缝，track.nearest 返回接缝前 segment；
+_point_ahead 返回“线段起点 index”，原代码第二次 _point_ahead(point_index) 从
+线段起点算方向，导致 AI 朝向反。
+修复：用返回点位置到下一个中心线点计算 heading；新增 auto_3 起跑朝向测试。
+
+
+2026.11.26 提交前约定
+
+51.
+约定：以后只要修改赛道生成器（scripts/build_random_track.py）的规则或输出结构，
+必须自动提升 GENERATOR_VERSION；同版本 seed 才保证可复现。已写入代码注释和 README。
